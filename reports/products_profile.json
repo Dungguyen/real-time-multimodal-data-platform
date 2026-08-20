@@ -1,0 +1,221 @@
+{
+  "dataset": "amazon_electronics_metadata",
+  "file": "D:\\real-time-multimodal-data-platform\\data\\source\\amazon\\meta_Electronics.json.gz",
+  "records": 786445,
+  "malformed_records": 0,
+  "processing_seconds": 67.52,
+  "cardinality": {
+    "unique_asin": 756077,
+    "duplicate_asin_records": 30368
+  },
+  "data_quality": {
+    "required_field_violations": {}
+  },
+  "availability": {
+    "with_description": 672400,
+    "with_feature": 649325,
+    "with_brand": 781018,
+    "with_price": 310336,
+    "with_image": 535118,
+    "with_high_res_image": 535118
+  },
+  "multimodal": {
+    "with_text": 786439,
+    "with_text_and_image": 535113,
+    "text_percentage": 99.9992,
+    "text_and_image_percentage": 68.042
+  },
+  "fields": {
+    "also_buy": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 682673,
+      "missing_percentage": 0.0,
+      "empty_percentage": 86.8049,
+      "types": {
+        "list": 786445
+      }
+    },
+    "also_view": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 559555,
+      "missing_percentage": 0.0,
+      "empty_percentage": 71.1499,
+      "types": {
+        "list": 786445
+      }
+    },
+    "asin": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 0,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.0,
+      "types": {
+        "string": 786445
+      }
+    },
+    "brand": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 5427,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.6901,
+      "types": {
+        "string": 786445
+      }
+    },
+    "category": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 0,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.0,
+      "types": {
+        "list": 786445
+      }
+    },
+    "date": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 114372,
+      "missing_percentage": 0.0,
+      "empty_percentage": 14.5429,
+      "types": {
+        "string": 786445
+      }
+    },
+    "description": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 114045,
+      "missing_percentage": 0.0,
+      "empty_percentage": 14.5013,
+      "types": {
+        "list": 786445
+      }
+    },
+    "details": {
+      "present_records": 785607,
+      "missing_records": 838,
+      "empty_records": 761942,
+      "missing_percentage": 0.1066,
+      "empty_percentage": 96.8843,
+      "types": {
+        "dict": 785607
+      }
+    },
+    "feature": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 137120,
+      "missing_percentage": 0.0,
+      "empty_percentage": 17.4354,
+      "types": {
+        "list": 786445
+      }
+    },
+    "fit": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 786364,
+      "missing_percentage": 0.0,
+      "empty_percentage": 99.9897,
+      "types": {
+        "string": 786445
+      }
+    },
+    "imageURL": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 251327,
+      "missing_percentage": 0.0,
+      "empty_percentage": 31.9574,
+      "types": {
+        "list": 786445
+      }
+    },
+    "imageURLHighRes": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 251327,
+      "missing_percentage": 0.0,
+      "empty_percentage": 31.9574,
+      "types": {
+        "list": 786445
+      }
+    },
+    "main_cat": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 4137,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.526,
+      "types": {
+        "string": 786445
+      }
+    },
+    "price": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 476109,
+      "missing_percentage": 0.0,
+      "empty_percentage": 60.5394,
+      "types": {
+        "string": 786445
+      }
+    },
+    "rank": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 14652,
+      "missing_percentage": 0.0,
+      "empty_percentage": 1.8631,
+      "types": {
+        "list": 763913,
+        "string": 22532
+      }
+    },
+    "similar_item": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 547492,
+      "missing_percentage": 0.0,
+      "empty_percentage": 69.6161,
+      "types": {
+        "string": 786445
+      }
+    },
+    "tech1": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 626258,
+      "missing_percentage": 0.0,
+      "empty_percentage": 79.6315,
+      "types": {
+        "string": 786445
+      }
+    },
+    "tech2": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 737221,
+      "missing_percentage": 0.0,
+      "empty_percentage": 93.7409,
+      "types": {
+        "string": 786445
+      }
+    },
+    "title": {
+      "present_records": 786445,
+      "missing_records": 0,
+      "empty_records": 15,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.0019,
+      "types": {
+        "string": 786445
+      }
+    }
+  }
+}

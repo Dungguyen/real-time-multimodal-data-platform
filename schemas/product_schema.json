@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Canonical Product",
+  "type": "object",
+  "required": [
+    "product_id",
+    "asin"
+  ],
+  "properties": {
+    "product_id": {
+      "type": "string"
+    },
+    "asin": {
+      "type": "string"
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "brand": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "category": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "main_category": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "price": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "high_res_image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "also_buy": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "also_view": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "similar_items": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "product_date": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "raw_source": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string"
+    }
+  }
+}

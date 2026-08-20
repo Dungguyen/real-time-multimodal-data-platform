@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Canonical Review",
+  "type": "object",
+  "required": [
+    "review_id",
+    "product_id",
+    "asin",
+    "reviewer_id",
+    "rating",
+    "review_timestamp"
+  ],
+  "properties": {
+    "review_id": {
+      "type": "string"
+    },
+    "product_id": {
+      "type": "string"
+    },
+    "asin": {
+      "type": "string"
+    },
+    "reviewer_id": {
+      "type": "string"
+    },
+    "reviewer_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rating": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 5
+    },
+    "verified": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "review_text": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "review_time": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "review_timestamp": {
+      "type": "integer"
+    },
+    "vote": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "style": {
+      "type": [
+        "object",
+        "null"
+      ]
+      }
+    },
+    "raw_source": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string"
+    }
+}

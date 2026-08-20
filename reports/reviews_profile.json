@@ -1,0 +1,164 @@
+{
+  "dataset": "amazon_electronics_reviews",
+  "file": "D:\\real-time-multimodal-data-platform\\data\\source\\amazon\\Electronics_5.json.gz",
+  "records": 6739590,
+  "malformed_records": 0,
+  "processing_seconds": 148.52,
+  "cardinality": {
+    "unique_asin": 160052,
+    "unique_reviewers": 728719
+  },
+  "referential_integrity": {
+    "metadata_unique_asin": 756077,
+    "review_unique_asin": 160052,
+    "orphan_asin_count": 117,
+    "orphan_asin_percentage": 0.0731
+  },
+  "data_quality": {
+    "required_field_violations": {}
+  },
+  "availability": {
+    "with_review_text": 6738227,
+    "with_summary": 6738759,
+    "with_style": 3547420,
+    "with_vote": 948674,
+    "with_image": 119958
+  },
+  "text_quality": {
+    "average_review_text_length": 352.62,
+    "average_summary_length": 25.61
+  },
+  "ratings": {
+    "5.0": 4323582,
+    "3.0": 504781,
+    "4.0": 1137393,
+    "2.0": 306676,
+    "1.0": 467158
+  },
+  "verified": {
+    "True": 6038416,
+    "False": 701174
+  },
+  "fields": {
+    "asin": {
+      "present_records": 6739590,
+      "missing_records": 0,
+      "empty_records": 0,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.0,
+      "types": {
+        "string": 6739590
+      }
+    },
+    "image": {
+      "present_records": 119958,
+      "missing_records": 6619632,
+      "empty_records": 0,
+      "missing_percentage": 98.2201,
+      "empty_percentage": 0.0,
+      "types": {
+        "list": 119958
+      }
+    },
+    "overall": {
+      "present_records": 6739590,
+      "missing_records": 0,
+      "empty_records": 0,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.0,
+      "types": {
+        "float": 6739590
+      }
+    },
+    "reviewText": {
+      "present_records": 6738237,
+      "missing_records": 1353,
+      "empty_records": 10,
+      "missing_percentage": 0.0201,
+      "empty_percentage": 0.0001,
+      "types": {
+        "string": 6738237
+      }
+    },
+    "reviewTime": {
+      "present_records": 6739590,
+      "missing_records": 0,
+      "empty_records": 0,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.0,
+      "types": {
+        "string": 6739590
+      }
+    },
+    "reviewerID": {
+      "present_records": 6739590,
+      "missing_records": 0,
+      "empty_records": 0,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.0,
+      "types": {
+        "string": 6739590
+      }
+    },
+    "reviewerName": {
+      "present_records": 6738665,
+      "missing_records": 925,
+      "empty_records": 90,
+      "missing_percentage": 0.0137,
+      "empty_percentage": 0.0013,
+      "types": {
+        "string": 6738665
+      }
+    },
+    "style": {
+      "present_records": 3547420,
+      "missing_records": 3192170,
+      "empty_records": 0,
+      "missing_percentage": 47.3645,
+      "empty_percentage": 0.0,
+      "types": {
+        "dict": 3547420
+      }
+    },
+    "summary": {
+      "present_records": 6738778,
+      "missing_records": 812,
+      "empty_records": 19,
+      "missing_percentage": 0.012,
+      "empty_percentage": 0.0003,
+      "types": {
+        "string": 6738778
+      }
+    },
+    "unixReviewTime": {
+      "present_records": 6739590,
+      "missing_records": 0,
+      "empty_records": 0,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.0,
+      "types": {
+        "int": 6739590
+      }
+    },
+    "verified": {
+      "present_records": 6739590,
+      "missing_records": 0,
+      "empty_records": 0,
+      "missing_percentage": 0.0,
+      "empty_percentage": 0.0,
+      "types": {
+        "bool": 6739590
+      }
+    },
+    "vote": {
+      "present_records": 948674,
+      "missing_records": 5790916,
+      "empty_records": 0,
+      "missing_percentage": 85.9239,
+      "empty_percentage": 0.0,
+      "types": {
+        "string": 948674
+      }
+    }
+  }
+}

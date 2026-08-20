@@ -1,0 +1,32 @@
+{
+  "status": "WARN",
+  "processing": {
+    "batch_size": 50000,
+    "elapsed_seconds": 89.44
+  },
+  "products": {
+    "total_records": 786445,
+    "unique_asin": 756077,
+    "duplicate_asin_records": 30368,
+    "missing_asin": 0,
+    "missing_title": 30,
+    "duplicate_percentage": 3.8614270546573506
+  },
+  "reviews": {
+    "total_records": 6739590,
+    "unique_review_id": 6546044,
+    "unique_reviewers": 728719,
+    "invalid_rating": 0,
+    "orphan_reviews": 6742,
+    "orphan_asin_count": 117,
+    "missing_review_text": 1363
+  },
+  "silver": {
+    "products": 836445,
+    "reviews": 6782848
+  },
+  "quarantine": {
+    "products": 0,
+    "reviews": 6742
+  }
+}
