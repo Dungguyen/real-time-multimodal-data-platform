@@ -2,7 +2,7 @@
   "status": "WARN",
   "processing": {
     "batch_size": 50000,
-    "elapsed_seconds": 89.44
+    "elapsed_seconds": 82.6
   },
   "products": {
     "total_records": 786445,
@@ -22,8 +22,8 @@
     "missing_review_text": 1363
   },
   "silver": {
-    "products": 836445,
-    "reviews": 6782848
+    "products": 786445,
+    "reviews": 6732848
   },
   "quarantine": {
     "products": 0,

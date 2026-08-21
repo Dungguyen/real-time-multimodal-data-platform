@@ -450,11 +450,11 @@ def build_silver_products(
 
     parquet_file = pq.ParquetFile(input_path)
 
-    first_batch = next(
-        parquet_file.iter_batches(
-            batch_size=BATCH_SIZE
-        )
+    batch_iterator = parquet_file.iter_batches(
+        batch_size=BATCH_SIZE
     )
+
+    first_batch = next(batch_iterator)
 
     silver_path = (
         SILVER_DIR
@@ -481,19 +481,23 @@ def build_silver_products(
     silver_rows = 0
     quarantine_rows = 0
 
-    for batch in [first_batch]:
-        valid, invalid = validate_product_batch(batch)
+    # Process the first batch
+    valid, invalid = validate_product_batch(
+        first_batch
+    )
 
-        silver_writer.write(valid)
-        quarantine_writer.write(invalid)
+    silver_writer.write(valid)
+    quarantine_writer.write(invalid)
 
-        silver_rows += valid.num_rows
-        quarantine_rows += invalid.num_rows
+    silver_rows += valid.num_rows
+    quarantine_rows += invalid.num_rows
 
-    for batch in parquet_file.iter_batches(
-        batch_size=BATCH_SIZE
-    ):
-        valid, invalid = validate_product_batch(batch)
+    # Continue from the SECOND batch
+    for batch in batch_iterator:
+
+        valid, invalid = validate_product_batch(
+            batch
+        )
 
         silver_writer.write(valid)
         quarantine_writer.write(invalid)
@@ -518,11 +522,11 @@ def build_silver_reviews(
 
     parquet_file = pq.ParquetFile(input_path)
 
-    first_batch = next(
-        parquet_file.iter_batches(
-            batch_size=BATCH_SIZE
-        )
+    batch_iterator = parquet_file.iter_batches(
+        batch_size=BATCH_SIZE
     )
+
+    first_batch = next(batch_iterator)
 
     silver_path = (
         SILVER_DIR
@@ -549,6 +553,7 @@ def build_silver_reviews(
     silver_rows = 0
     quarantine_rows = 0
 
+    # Process the first batch
     valid, invalid = validate_review_batch(
         first_batch,
         product_asins,
@@ -560,9 +565,9 @@ def build_silver_reviews(
     silver_rows += valid.num_rows
     quarantine_rows += invalid.num_rows
 
-    for batch in parquet_file.iter_batches(
-        batch_size=BATCH_SIZE
-    ):
+    # Continue from the SECOND batch
+    for batch in batch_iterator:
+
         valid, invalid = validate_review_batch(
             batch,
             product_asins,
@@ -578,7 +583,6 @@ def build_silver_reviews(
     quarantine_writer.close()
 
     return silver_rows, quarantine_rows
-
 
 # ============================================================================
 # MAIN
