@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Data
+data/source/*
+data/canonical/*
+data/synthetic/*
+data/silver/*
+data/quarantine/*
+
+!data/source/.gitkeep
+!data/canonical/.gitkeep
+!data/synthetic/.gitkeep
+!data/silver/.gitkeep
+!data/quarantine/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Spark
+spark-warehouse/
+metastore_db/
+
+# Airflow
+airflow/logs/
+airflow/airflow.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# =========================
+# Dataset
+# =========================
+
+data/raw/*
+data/processed/*
+
+# Keep directory structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Large data files
+*.parquet
+*.json.gz
+*.csv
