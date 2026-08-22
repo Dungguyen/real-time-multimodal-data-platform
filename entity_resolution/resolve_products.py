@@ -31,6 +31,246 @@ MAPPING_OUTPUT = (
     / "entity_mapping.parquet"
 )
 
+BATCH_SIZE = 50_000
+
+
+def build_canonical_mapping(identity_table):
+    """
+    Build deterministic canonical mapping.
+
+    Rule:
+        First occurrence of each ASIN becomes canonical.
+
+    Returns:
+        canonical_by_asin:
+            ASIN -> canonical product_id
+
+        canonical_indices:
+            row indices of canonical records
+    """
+
+    product_ids = identity_table["product_id"].to_pylist()
+    asins = identity_table["asin"].to_pylist()
+
+    canonical_by_asin = {}
+    canonical_indices = []
+
+    for index, (product_id, asin_value) in enumerate(
+        zip(product_ids, asins)
+    ):
+
+        if asin_value not in canonical_by_asin:
+
+            canonical_by_asin[asin_value] = product_id
+
+            # IMPORTANT:
+            # store the actual row index
+            canonical_indices.append(index)
+
+    return (
+        canonical_by_asin,
+        canonical_indices,
+    )
+
+
+def build_mapping_table(
+    identity_table,
+    canonical_by_asin,
+):
+    """
+    Build source_product_id -> canonical_product_id mapping.
+    """
+
+    product_ids = identity_table["product_id"].to_pylist()
+    asins = identity_table["asin"].to_pylist()
+
+    mapping_product_ids = []
+    mapping_asins = []
+    canonical_product_ids = []
+    match_types = []
+    confidence_scores = []
+    resolution_statuses = []
+
+    for product_id, asin_value in zip(
+        product_ids,
+        asins,
+    ):
+
+        canonical_product_id = (
+            canonical_by_asin[asin_value]
+        )
+
+        if product_id == canonical_product_id:
+
+            match_type = "canonical"
+
+        else:
+
+            match_type = "exact_asin_duplicate"
+
+        mapping_product_ids.append(
+            product_id
+        )
+
+        mapping_asins.append(
+            asin_value
+        )
+
+        canonical_product_ids.append(
+            canonical_product_id
+        )
+
+        match_types.append(
+            match_type
+        )
+
+        confidence_scores.append(
+            1.0
+        )
+
+        resolution_statuses.append(
+            "resolved"
+        )
+
+    return pa.table(
+        {
+            "source_product_id": pa.array(
+                mapping_product_ids,
+                type=pa.string(),
+            ),
+            "asin": pa.array(
+                mapping_asins,
+                type=pa.string(),
+            ),
+            "canonical_product_id": pa.array(
+                canonical_product_ids,
+                type=pa.string(),
+            ),
+            "match_type": pa.array(
+                match_types,
+                type=pa.string(),
+            ),
+            "confidence_score": pa.array(
+                confidence_scores,
+                type=pa.float64(),
+            ),
+            "resolution_status": pa.array(
+                resolution_statuses,
+                type=pa.string(),
+            ),
+        }
+    )
+
+
+def write_canonical_products(
+    input_path,
+    output_path,
+    canonical_indices,
+):
+    """
+    Stream the parquet file and write only canonical rows.
+
+    canonical_indices contains the exact row positions that
+    represent the canonical entity for each ASIN.
+    """
+
+    parquet_file = pq.ParquetFile(
+        input_path
+    )
+
+    writer = None
+
+    processed = 0
+    canonical_written = 0
+
+    canonical_index_set = set(
+        canonical_indices
+    )
+
+    try:
+
+        for batch_number, batch in enumerate(
+            parquet_file.iter_batches(
+                batch_size=BATCH_SIZE
+            ),
+            start=1,
+        ):
+
+            table = pa.Table.from_batches(
+                [batch]
+            )
+
+            batch_start = processed
+            batch_end = (
+                processed
+                + table.num_rows
+            )
+
+            # Find canonical rows belonging
+            # to this batch.
+            local_indices = []
+
+            for global_index in range(
+                batch_start,
+                batch_end,
+            ):
+
+                if global_index in canonical_index_set:
+
+                    local_index = (
+                        global_index
+                        - batch_start
+                    )
+
+                    local_indices.append(
+                        local_index
+                    )
+
+            if local_indices:
+
+                indices = pa.array(
+                    local_indices,
+                    type=pa.int64(),
+                )
+
+                canonical_batch = table.take(
+                    indices
+                )
+
+                if writer is None:
+
+                    writer = pq.ParquetWriter(
+                        output_path,
+                        canonical_batch.schema,
+                        compression="zstd",
+                    )
+
+                writer.write_table(
+                    canonical_batch
+                )
+
+                canonical_written += (
+                    canonical_batch.num_rows
+                )
+
+            processed += table.num_rows
+
+            if batch_number % 5 == 0:
+
+                print(
+                    f"Canonical batches processed: "
+                    f"{batch_number} | "
+                    f"records={processed:,} | "
+                    f"canonical={canonical_written:,}"
+                )
+
+    finally:
+
+        if writer is not None:
+            writer.close()
+
+    return canonical_written
+
 
 def main():
 
@@ -43,20 +283,32 @@ def main():
         exist_ok=True,
     )
 
-    print(f"Input: {INPUT}")
-
-    table = pq.read_table(INPUT)
-
     print(
-        f"Input records: "
-        f"{table.num_rows:,}"
+        f"Input: {INPUT}"
     )
 
     # ------------------------------------------------------------------
-    # 1. Validate ASIN
+    # 1. Read lightweight identity columns
     # ------------------------------------------------------------------
 
-    asin = table["asin"]
+    identity_table = pq.read_table(
+        INPUT,
+        columns=[
+            "product_id",
+            "asin",
+        ],
+    )
+
+    print(
+        f"Input records: "
+        f"{identity_table.num_rows:,}"
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Validate ASIN
+    # ------------------------------------------------------------------
+
+    asin = identity_table["asin"]
 
     missing_mask = pc.or_(
         pc.is_null(asin),
@@ -78,100 +330,83 @@ def main():
         f"{missing_count:,}"
     )
 
+    if missing_count > 0:
+
+        raise ValueError(
+            "ASIN contains missing or empty values."
+        )
+
     # ------------------------------------------------------------------
-    # 2. Sort by ASIN
+    # 3. Build canonical entities
     # ------------------------------------------------------------------
 
-    sorted_table = table.sort_by(
-        [
-            ("asin", "ascending"),
-            ("product_id", "ascending"),
-        ]
+    (
+        canonical_by_asin,
+        canonical_indices,
+    ) = build_canonical_mapping(
+        identity_table
     )
 
-    # ------------------------------------------------------------------
-    # 3. Keep first record for every ASIN
-    # ------------------------------------------------------------------
-
-    asins = sorted_table["asin"].to_pylist()
-
-    keep_indices = []
-
-    previous_asin = None
-
-    for index, current_asin in enumerate(asins):
-
-        if current_asin != previous_asin:
-
-            keep_indices.append(index)
-
-            previous_asin = current_asin
-
-    canonical_indices = pa.array(
-        keep_indices,
-        type=pa.int64(),
-    )
-
-    canonical_products = (
-        sorted_table.take(canonical_indices)
-    )
-
-    # ------------------------------------------------------------------
-    # 4. Build canonical entity ID
-    # ------------------------------------------------------------------
-
-    canonical_product_ids = (
-        canonical_products["product_id"]
-    )
-
-    canonical_asins = (
-        canonical_products["asin"]
-    )
-
-    canonical_count = (
-        canonical_products.num_rows
+    canonical_count = len(
+        canonical_by_asin
     )
 
     print(
-        f"Canonical products: "
+        f"Canonical entities: "
         f"{canonical_count:,}"
     )
 
     # ------------------------------------------------------------------
-    # 5. Build ASIN -> canonical product mapping
+    # 4. Build mapping
     # ------------------------------------------------------------------
 
-    mapping = pa.table(
-        {
-            "asin": canonical_asins,
-            "canonical_product_id": canonical_product_ids,
-            "match_type": pa.array(
-                ["exact_asin"] * canonical_count
-            ),
-            "confidence_score": pa.array(
-                [1.0] * canonical_count,
-                type=pa.float64(),
-            ),
-            "resolution_status": pa.array(
-                ["resolved"] * canonical_count
-            ),
-        }
+    mapping = build_mapping_table(
+        identity_table,
+        canonical_by_asin,
     )
 
     # ------------------------------------------------------------------
-    # 6. Write outputs
+    # 5. Write canonical products
     # ------------------------------------------------------------------
 
-    pq.write_table(
-        canonical_products,
-        CANONICAL_OUTPUT,
-        compression="zstd",
+    print()
+    print(
+        "Writing canonical products in batches..."
     )
+
+    canonical_count_written = (
+        write_canonical_products(
+            INPUT,
+            CANONICAL_OUTPUT,
+            canonical_indices,
+        )
+    )
+
+    # ------------------------------------------------------------------
+    # 6. Write mapping
+    # ------------------------------------------------------------------
 
     pq.write_table(
         mapping,
         MAPPING_OUTPUT,
         compression="zstd",
+    )
+
+    # ------------------------------------------------------------------
+    # 7. Statistics
+    # ------------------------------------------------------------------
+
+    input_count = identity_table.num_rows
+
+    duplicate_count = (
+        input_count
+        - canonical_count_written
+    )
+
+    duplicate_rate = (
+        duplicate_count
+        / input_count
+        * 100
     )
 
     print()
@@ -181,17 +416,22 @@ def main():
 
     print(
         f"Input records:       "
-        f"{table.num_rows:,}"
+        f"{input_count:,}"
     )
 
     print(
         f"Canonical entities:  "
-        f"{canonical_count:,}"
+        f"{canonical_count_written:,}"
     )
 
     print(
         f"Duplicates removed:  "
-        f"{table.num_rows - canonical_count:,}"
+        f"{duplicate_count:,}"
+    )
+
+    print(
+        f"Duplicate rate:      "
+        f"{duplicate_rate:.2f}%"
     )
 
     print(
