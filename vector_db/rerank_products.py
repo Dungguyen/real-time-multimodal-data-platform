@@ -1,3 +1,4 @@
+
 from pathlib import Path
 import argparse
 import json
@@ -5,6 +6,10 @@ import math
 
 import pyarrow.parquet as pq
 
+
+# ============================================================================
+# PROJECT PATHS
+# ============================================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,30 +30,35 @@ REVIEW_STATS = (
 )
 
 
-# ----------------------------------------------------------------------
+# ============================================================================
 # CONFIG
-# ----------------------------------------------------------------------
+# ============================================================================
 
 DEFAULT_TOP_K = 10
 
-# Semantic similarity remains the dominant signal.
+# Process Parquet files in batches to avoid loading the entire dataset.
+METADATA_BATCH_SIZE = 10_000
+
+# Semantic relevance remains the dominant signal.
 SEMANTIC_WEIGHT = 0.90
 
-# Product quality signals.
+# Business signals.
 RATING_WEIGHT = 0.05
 POPULARITY_WEIGHT = 0.03
 VERIFIED_WEIGHT = 0.02
 
 
-# ----------------------------------------------------------------------
+# ============================================================================
 # HELPERS
-# ----------------------------------------------------------------------
+# ============================================================================
 
 def safe_float(value, default=0.0):
+
     if value is None:
         return default
 
     try:
+
         value = float(value)
 
         if math.isnan(value) or math.isinf(value):
@@ -57,26 +67,13 @@ def safe_float(value, default=0.0):
         return value
 
     except (TypeError, ValueError):
+
         return default
-
-
-def find_column(table, candidates):
-    """
-    Find the first existing column from a list of candidates.
-    """
-
-    columns = set(table.column_names)
-
-    for candidate in candidates:
-        if candidate in columns:
-            return candidate
-
-    return None
 
 
 def normalize_rating(value):
     """
-    Amazon ratings are normally 1-5.
+    Amazon rating is normally 1-5.
 
     Convert to [0, 1].
     """
@@ -86,7 +83,10 @@ def normalize_rating(value):
     if rating <= 0:
         return 0.0
 
-    return min(rating / 5.0, 1.0)
+    return min(
+        rating / 5.0,
+        1.0,
+    )
 
 
 def normalize_popularity(review_count):
@@ -128,294 +128,546 @@ def normalize_verified_ratio(value):
     )
 
 
-# ----------------------------------------------------------------------
-# LOAD GOLD DATA
-# ----------------------------------------------------------------------
+def find_column(table, candidates):
+    """
+    Return the first existing column from candidates.
+    """
 
-def load_product_metadata():
+    columns = set(table.column_names)
+
+    for candidate in candidates:
+
+        if candidate in columns:
+            return candidate
+
+    return None
+
+
+# ============================================================================
+# CANDIDATE IDS
+# ============================================================================
+
+def get_candidate_keys(candidates):
+    """
+    Extract product IDs and ASINs from candidates.
+
+    We only need metadata for the candidates that will actually be reranked.
+    """
+
+    product_ids = set()
+    asins = set()
+
+    for candidate in candidates:
+
+        product_id = candidate.get(
+            "product_id",
+            candidate.get(
+                "canonical_product_id"
+            ),
+        )
+
+        asin = candidate.get(
+            "asin"
+        )
+
+        if product_id is not None:
+
+            product_ids.add(
+                str(product_id)
+            )
+
+        if asin is not None:
+
+            asins.add(
+                str(asin)
+            )
+
+    return product_ids, asins
+
+
+# ============================================================================
+# PRODUCT METADATA
+# ============================================================================
+
+def load_product_metadata_for_candidates(
+    candidate_product_ids,
+    candidate_asins,
+):
+    """
+    Scan product_summary.parquet in batches.
+
+    Only metadata belonging to candidate products is kept in RAM.
+    """
+
     print()
-    print("Loading product metadata...")
+    print(
+        "Loading product metadata "
+        "for candidates..."
+    )
 
-    table = pq.read_table(PRODUCT_SUMMARY)
+    if not PRODUCT_SUMMARY.exists():
+
+        raise FileNotFoundError(
+            f"Product summary not found: "
+            f"{PRODUCT_SUMMARY}"
+        )
+
+    parquet_file = pq.ParquetFile(
+        PRODUCT_SUMMARY
+    )
+
+    total_rows = parquet_file.metadata.num_rows
 
     print(
         f"Product metadata rows: "
-        f"{table.num_rows:,}"
+        f"{total_rows:,}"
     )
 
-    return table
+    print(
+        f"Metadata batch size: "
+        f"{METADATA_BATCH_SIZE:,}"
+    )
+
+    product_lookup = {}
+
+    total_processed = 0
+
+    for batch in parquet_file.iter_batches(
+        batch_size=METADATA_BATCH_SIZE
+    ):
+
+        table = batch
+
+        product_id_column = find_column(
+            table,
+            [
+                "canonical_product_id",
+                "product_id",
+            ],
+        )
+
+        asin_column = find_column(
+            table,
+            [
+                "asin",
+            ],
+        )
+
+        title_column = find_column(
+            table,
+            [
+                "title",
+                "product_title",
+            ],
+        )
+
+        brand_column = find_column(
+            table,
+            [
+                "brand",
+            ],
+        )
+
+        category_column = find_column(
+            table,
+            [
+                "main_category",
+                "main_cat",
+                "category",
+            ],
+        )
+
+        price_column = find_column(
+            table,
+            [
+                "price",
+            ],
+        )
+
+        if product_id_column is None:
+
+            raise ValueError(
+                "Product metadata must contain "
+                "product_id or canonical_product_id."
+            )
+
+        product_ids = table[
+            product_id_column
+        ].to_pylist()
+
+        asins = (
+            table[asin_column].to_pylist()
+            if asin_column
+            else [None] * len(product_ids)
+        )
+
+        titles = (
+            table[title_column].to_pylist()
+            if title_column
+            else [None] * len(product_ids)
+        )
+
+        brands = (
+            table[brand_column].to_pylist()
+            if brand_column
+            else [None] * len(product_ids)
+        )
+
+        categories = (
+            table[category_column].to_pylist()
+            if category_column
+            else [None] * len(product_ids)
+        )
+
+        prices = (
+            table[price_column].to_pylist()
+            if price_column
+            else [None] * len(product_ids)
+        )
+
+        for (
+            product_id,
+            asin,
+            title,
+            brand,
+            category,
+            price,
+        ) in zip(
+            product_ids,
+            asins,
+            titles,
+            brands,
+            categories,
+            prices,
+        ):
+
+            if product_id is None:
+                continue
+
+            product_id_str = str(
+                product_id
+            )
+
+            asin_str = (
+                str(asin)
+                if asin is not None
+                else None
+            )
+
+            # --------------------------------------------------------------
+            # Only keep candidate products.
+            # --------------------------------------------------------------
+
+            if (
+                product_id_str
+                not in candidate_product_ids
+                and
+                (
+                    asin_str is None
+                    or
+                    asin_str not in candidate_asins
+                )
+            ):
+                continue
+
+            product_lookup[
+                product_id_str
+            ] = {
+
+                "asin": asin,
+
+                "title": title,
+
+                "brand": brand,
+
+                "category": category,
+
+                "price": price,
+            }
+
+        total_processed += len(product_ids)
+
+        print(
+            f"Scanning product metadata: "
+            f"{min(total_processed, total_rows):,}/"
+            f"{total_rows:,}"
+            f" | Matched: "
+            f"{len(product_lookup):,}"
+        )
+
+        # We already found all candidate product IDs.
+        if (
+            len(product_lookup)
+            >= len(candidate_product_ids)
+        ):
+
+            break
+
+    print(
+        f"Product metadata matched: "
+        f"{len(product_lookup):,}/"
+        f"{len(candidate_product_ids):,}"
+    )
+
+    return product_lookup
 
 
-def load_review_stats():
-    print("Loading review statistics...")
+# ============================================================================
+# REVIEW STATISTICS
+# ============================================================================
 
-    table = pq.read_table(REVIEW_STATS)
+def load_review_stats_for_candidates(
+    candidate_product_ids,
+    candidate_asins,
+):
+    """
+    Scan review statistics in batches.
+
+    Only review statistics for candidate products are kept in RAM.
+    """
+
+    print()
+    print(
+        "Loading review statistics "
+        "for candidates..."
+    )
+
+    if not REVIEW_STATS.exists():
+
+        print(
+            "WARNING: Review statistics file "
+            "does not exist."
+        )
+
+        return {}
+
+    parquet_file = pq.ParquetFile(
+        REVIEW_STATS
+    )
+
+    total_rows = parquet_file.metadata.num_rows
 
     print(
         f"Review statistics rows: "
-        f"{table.num_rows:,}"
+        f"{total_rows:,}"
     )
 
-    return table
-
-
-# ----------------------------------------------------------------------
-# BUILD LOOKUPS
-# ----------------------------------------------------------------------
-
-def build_product_lookup(table):
-
-    columns = table.column_names
-
-    product_id_column = find_column(
-        table,
-        [
-            "canonical_product_id",
-            "product_id",
-        ],
+    print(
+        f"Metadata batch size: "
+        f"{METADATA_BATCH_SIZE:,}"
     )
 
-    asin_column = find_column(
-        table,
-        [
-            "asin",
-        ],
-    )
+    review_lookup = {}
 
-    title_column = find_column(
-        table,
-        [
-            "title",
-            "product_title",
-        ],
-    )
+    total_processed = 0
 
-    brand_column = find_column(
-        table,
-        [
-            "brand",
-        ],
-    )
-
-    category_column = find_column(
-        table,
-        [
-            "main_category",
-            "main_cat",
-            "category",
-        ],
-    )
-
-    price_column = find_column(
-        table,
-        [
-            "price",
-        ],
-    )
-
-    print()
-    print("Product summary columns:")
-    print(columns)
-
-    lookup = {}
-
-    product_ids = (
-        table[product_id_column].to_pylist()
-        if product_id_column
-        else []
-    )
-
-    asins = (
-        table[asin_column].to_pylist()
-        if asin_column
-        else [None] * len(product_ids)
-    )
-
-    titles = (
-        table[title_column].to_pylist()
-        if title_column
-        else [None] * len(product_ids)
-    )
-
-    brands = (
-        table[brand_column].to_pylist()
-        if brand_column
-        else [None] * len(product_ids)
-    )
-
-    categories = (
-        table[category_column].to_pylist()
-        if category_column
-        else [None] * len(product_ids)
-    )
-
-    prices = (
-        table[price_column].to_pylist()
-        if price_column
-        else [None] * len(product_ids)
-    )
-
-    for (
-        product_id,
-        asin,
-        title,
-        brand,
-        category,
-        price,
-    ) in zip(
-        product_ids,
-        asins,
-        titles,
-        brands,
-        categories,
-        prices,
+    for batch in parquet_file.iter_batches(
+        batch_size=METADATA_BATCH_SIZE
     ):
 
-        lookup[str(product_id)] = {
-            "asin": asin,
-            "title": title,
-            "brand": brand,
-            "category": category,
-            "price": price,
-        }
+        table = batch
 
-    return lookup
-
-
-def build_review_lookup(table):
-
-    columns = table.column_names
-
-    product_id_column = find_column(
-        table,
-        [
-            "canonical_product_id",
-            "product_id",
-        ],
-    )
-
-    asin_column = find_column(
-        table,
-        [
-            "asin",
-        ],
-    )
-
-    review_count_column = find_column(
-        table,
-        [
-            "review_count",
-            "num_reviews",
-            "total_reviews",
-            "reviews_count",
-        ],
-    )
-
-    rating_column = find_column(
-        table,
-        [
-            "average_rating",
-            "avg_rating",
-            "rating",
-            "mean_rating",
-        ],
-    )
-
-    verified_column = find_column(
-        table,
-        [
-            "verified_ratio",
-            "verified_review_ratio",
-            "verified_ratio_pct",
-        ],
-    )
-
-    print()
-    print("Review statistics columns:")
-    print(columns)
-
-    lookup = {}
-
-    if not product_id_column and not asin_column:
-        print(
-            "WARNING: No product ID or ASIN column "
-            "found in review statistics."
+        product_id_column = find_column(
+            table,
+            [
+                "canonical_product_id",
+                "product_id",
+            ],
         )
 
-        return lookup
+        asin_column = find_column(
+            table,
+            [
+                "asin",
+            ],
+        )
 
-    ids = (
-        table[product_id_column].to_pylist()
-        if product_id_column
-        else [None] * table.num_rows
+        review_count_column = find_column(
+            table,
+            [
+                "review_count",
+                "num_reviews",
+                "total_reviews",
+                "reviews_count",
+            ],
+        )
+
+        rating_column = find_column(
+            table,
+            [
+                "average_rating",
+                "avg_rating",
+                "rating",
+                "mean_rating",
+            ],
+        )
+
+        verified_column = find_column(
+            table,
+            [
+                "verified_ratio",
+                "verified_review_ratio",
+                "verified_ratio_pct",
+            ],
+        )
+
+        if (
+            product_id_column is None
+            and
+            asin_column is None
+        ):
+
+            print(
+                "WARNING: Review statistics "
+                "contains no product ID or ASIN."
+            )
+
+            return review_lookup
+
+        row_count = table.num_rows
+
+        product_ids = (
+            table[
+                product_id_column
+            ].to_pylist()
+            if product_id_column
+            else [None] * row_count
+        )
+
+        asins = (
+            table[
+                asin_column
+            ].to_pylist()
+            if asin_column
+            else [None] * row_count
+        )
+
+        review_counts = (
+            table[
+                review_count_column
+            ].to_pylist()
+            if review_count_column
+            else [0] * row_count
+        )
+
+        ratings = (
+            table[
+                rating_column
+            ].to_pylist()
+            if rating_column
+            else [0] * row_count
+        )
+
+        verified_ratios = (
+            table[
+                verified_column
+            ].to_pylist()
+            if verified_column
+            else [0] * row_count
+        )
+
+        for (
+            product_id,
+            asin,
+            review_count,
+            rating,
+            verified_ratio,
+        ) in zip(
+            product_ids,
+            asins,
+            review_counts,
+            ratings,
+            verified_ratios,
+        ):
+
+            product_id_str = (
+                str(product_id)
+                if product_id is not None
+                else None
+            )
+
+            asin_str = (
+                str(asin)
+                if asin is not None
+                else None
+            )
+
+            # --------------------------------------------------------------
+            # Skip rows unrelated to current candidates.
+            # --------------------------------------------------------------
+
+            if (
+                product_id_str is not None
+                and
+                product_id_str
+                in candidate_product_ids
+            ):
+
+                record = {
+                    "review_count": safe_float(
+                        review_count
+                    ),
+                    "rating": safe_float(
+                        rating
+                    ),
+                    "verified_ratio": safe_float(
+                        verified_ratio
+                    ),
+                }
+
+                review_lookup[
+                    (
+                        "product_id",
+                        product_id_str,
+                    )
+                ] = record
+
+            elif (
+                asin_str is not None
+                and
+                asin_str in candidate_asins
+            ):
+
+                record = {
+                    "review_count": safe_float(
+                        review_count
+                    ),
+                    "rating": safe_float(
+                        rating
+                    ),
+                    "verified_ratio": safe_float(
+                        verified_ratio
+                    ),
+                }
+
+                review_lookup[
+                    (
+                        "asin",
+                        asin_str,
+                    )
+                ] = record
+
+        total_processed += row_count
+
+        print(
+            f"Scanning review statistics: "
+            f"{min(total_processed, total_rows):,}/"
+            f"{total_rows:,}"
+            f" | Matched: "
+            f"{len(review_lookup):,}"
+        )
+
+    print(
+        f"Review statistics matched: "
+        f"{len(review_lookup):,}"
     )
 
-    asins = (
-        table[asin_column].to_pylist()
-        if asin_column
-        else [None] * table.num_rows
-    )
-
-    review_counts = (
-        table[review_count_column].to_pylist()
-        if review_count_column
-        else [0] * table.num_rows
-    )
-
-    ratings = (
-        table[rating_column].to_pylist()
-        if rating_column
-        else [0] * table.num_rows
-    )
-
-    verified_ratios = (
-        table[verified_column].to_pylist()
-        if verified_column
-        else [0] * table.num_rows
-    )
-
-    for (
-        product_id,
-        asin,
-        review_count,
-        rating,
-        verified_ratio,
-    ) in zip(
-        ids,
-        asins,
-        review_counts,
-        ratings,
-        verified_ratios,
-    ):
-
-        record = {
-            "review_count": safe_float(
-                review_count
-            ),
-            "rating": safe_float(
-                rating
-            ),
-            "verified_ratio": safe_float(
-                verified_ratio
-            ),
-        }
-
-        if product_id is not None:
-            lookup[
-                ("product_id", str(product_id))
-            ] = record
-
-        if asin is not None:
-            lookup[
-                ("asin", str(asin))
-            ] = record
-
-    return lookup
+    return review_lookup
 
 
-# ----------------------------------------------------------------------
+# ============================================================================
 # RERANK
-# ----------------------------------------------------------------------
+# ============================================================================
 
 def rerank(
     candidates,
@@ -423,6 +675,14 @@ def rerank(
     review_lookup,
     top_k,
 ):
+    """
+    Rerank retrieved candidates using:
+
+        90% semantic/fusion score
+         5% rating
+         3% popularity
+         2% verified ratio
+    """
 
     results = []
 
@@ -442,40 +702,45 @@ def rerank(
             "asin"
         )
 
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Semantic score
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
 
-        text_score = safe_float(
+        # Prefer fusion_score.
+        #
+        # This is important because the multimodal retrieval stage
+        # produces the semantic/fusion relevance score.
+        #
+        # final_score is only the score generated by this reranker.
+        semantic_score = safe_float(
             candidate.get(
-                "text_score",
-                0.0,
-            )
-        )
-
-        image_score = safe_float(
-            candidate.get(
-                "image_score",
-                0.0,
-            )
-        )
-
-        original_score = safe_float(
-            candidate.get(
-                "final_score",
+                "fusion_score",
                 candidate.get(
-                    "score",
-                    max(
-                        text_score,
-                        image_score,
+                    "final_score",
+                    candidate.get(
+                        "score",
+                        max(
+                            safe_float(
+                                candidate.get(
+                                    "text_score",
+                                    0.0,
+                                )
+                            ),
+                            safe_float(
+                                candidate.get(
+                                    "image_score",
+                                    0.0,
+                                )
+                            ),
+                        ),
                     ),
                 ),
             )
         )
 
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Product metadata
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
 
         metadata = product_lookup.get(
             product_id,
@@ -483,22 +748,37 @@ def rerank(
         )
 
         if not asin:
-            asin = metadata.get("asin")
 
-        # --------------------------------------------------------------
+            asin = metadata.get(
+                "asin"
+            )
+
+        # ------------------------------------------------------------------
         # Review statistics
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
 
         review_stats = review_lookup.get(
-            ("product_id", product_id)
+            (
+                "product_id",
+                product_id,
+            )
         )
 
-        if review_stats is None and asin:
+        if (
+            review_stats is None
+            and
+            asin is not None
+        ):
+
             review_stats = review_lookup.get(
-                ("asin", str(asin))
+                (
+                    "asin",
+                    str(asin),
+                )
             )
 
         if review_stats is None:
+
             review_stats = {
                 "review_count": 0,
                 "rating": 0,
@@ -526,9 +806,9 @@ def rerank(
             )
         )
 
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Normalize business signals
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
 
         rating_score = normalize_rating(
             rating
@@ -542,13 +822,13 @@ def rerank(
             verified_ratio
         )
 
-        # --------------------------------------------------------------
-        # Final score
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Final reranking score
+        # ------------------------------------------------------------------
 
         final_score = (
             SEMANTIC_WEIGHT
-            * original_score
+            * semantic_score
             +
             RATING_WEIGHT
             * rating_score
@@ -563,6 +843,10 @@ def rerank(
         result = {
             **candidate,
 
+            # Keep semantic score separate.
+            "semantic_score": semantic_score,
+
+            # Final business-aware score.
             "final_score": final_score,
 
             "rating": rating,
@@ -592,21 +876,31 @@ def rerank(
             "price": metadata.get(
                 "price"
             ),
+
+            "asin": asin,
         }
 
-        results.append(result)
+        results.append(
+            result
+        )
+
+    # ----------------------------------------------------------------------
+    # Sort
+    # ----------------------------------------------------------------------
 
     results.sort(
-        key=lambda x: x["final_score"],
+        key=lambda item: (
+            item["final_score"]
+        ),
         reverse=True,
     )
 
     return results[:top_k]
 
 
-# ----------------------------------------------------------------------
+# ============================================================================
 # MAIN
-# ----------------------------------------------------------------------
+# ============================================================================
 
 def main():
 
@@ -630,9 +924,25 @@ def main():
         "--top-k",
         type=int,
         default=DEFAULT_TOP_K,
+        help=(
+            "Number of final results "
+            "to return."
+        ),
+    )
+
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=METADATA_BATCH_SIZE,
+        help=(
+            "Number of Parquet rows "
+            "processed at a time."
+        ),
     )
 
     args = parser.parse_args()
+
+    # Allow user to override the default batch size.
 
     print("=" * 80)
     print("PRODUCT RERANKING")
@@ -646,15 +956,21 @@ def main():
         f"Top-K:      {args.top_k}"
     )
 
-    # ------------------------------------------------------------------
-    # Load candidates
-    # ------------------------------------------------------------------
+    print(
+        f"Metadata batch: "
+        f"{METADATA_BATCH_SIZE:,}"
+    )
+
+    # =========================================================================
+    # LOAD CANDIDATES
+    # =========================================================================
 
     candidate_path = Path(
         args.candidates
     )
 
     if not candidate_path.exists():
+
         raise FileNotFoundError(
             f"Candidate file not found: "
             f"{candidate_path}"
@@ -664,9 +980,11 @@ def main():
         candidate_path,
         "r",
         encoding="utf-8",
-    ) as f:
+    ) as file:
 
-        candidates = json.load(f)
+        candidates = json.load(
+            file
+        )
 
     if not isinstance(
         candidates,
@@ -674,46 +992,71 @@ def main():
     ):
 
         raise ValueError(
-            "Candidate JSON must contain a list."
+            "Candidate JSON must contain "
+            "a list."
         )
 
+    print()
     print(
         f"Candidates loaded: "
         f"{len(candidates):,}"
     )
 
-    # ------------------------------------------------------------------
-    # Load data
-    # ------------------------------------------------------------------
+    if not candidates:
 
-    product_table = load_product_metadata()
+        print(
+            "No candidates to rerank."
+        )
 
-    review_table = load_review_stats()
+        return
 
-    product_lookup = build_product_lookup(
-        product_table
+    # =========================================================================
+    # EXTRACT CANDIDATE IDS
+    # =========================================================================
+
+    candidate_product_ids, candidate_asins = (
+        get_candidate_keys(
+            candidates
+        )
     )
-
-    review_lookup = build_review_lookup(
-        review_table
-    )
-
-    print(
-        f"Product lookup: "
-        f"{len(product_lookup):,}"
-    )
-
-    print(
-        f"Review lookup:  "
-        f"{len(review_lookup):,}"
-    )
-
-    # ------------------------------------------------------------------
-    # Rerank
-    # ------------------------------------------------------------------
 
     print()
-    print("Reranking candidates...")
+    print(
+        f"Candidate product IDs: "
+        f"{len(candidate_product_ids):,}"
+    )
+
+    print(
+        f"Candidate ASINs:       "
+        f"{len(candidate_asins):,}"
+    )
+
+    # =========================================================================
+    # LOAD ONLY REQUIRED METADATA
+    # =========================================================================
+
+    product_lookup = (
+        load_product_metadata_for_candidates(
+            candidate_product_ids,
+            candidate_asins,
+        )
+    )
+
+    review_lookup = (
+        load_review_stats_for_candidates(
+            candidate_product_ids,
+            candidate_asins,
+        )
+    )
+
+    # =========================================================================
+    # RERANK
+    # =========================================================================
+
+    print()
+    print(
+        "Reranking candidates..."
+    )
 
     results = rerank(
         candidates=candidates,
@@ -722,9 +1065,9 @@ def main():
         top_k=args.top_k,
     )
 
-    # ------------------------------------------------------------------
-    # Output
-    # ------------------------------------------------------------------
+    # =========================================================================
+    # OUTPUT
+    # =========================================================================
 
     print()
     print("=" * 80)
@@ -737,7 +1080,9 @@ def main():
     ):
 
         print()
-        print(f"#{index}")
+        print(
+            f"#{index}"
+        )
 
         print(
             f"Final score:      "
@@ -746,7 +1091,7 @@ def main():
 
         print(
             f"Semantic score:   "
-            f"{safe_float(result.get('final_score', 0)):.4f}"
+            f"{result['semantic_score']:.4f}"
         )
 
         print(
@@ -762,6 +1107,21 @@ def main():
         print(
             f"Verified ratio:   "
             f"{result['verified_ratio']:.2%}"
+        )
+
+        print(
+            f"Rating score:     "
+            f"{result['rating_score']:.4f}"
+        )
+
+        print(
+            f"Popularity score:  "
+            f"{result['popularity_score']:.4f}"
+        )
+
+        print(
+            f"Verified score:    "
+            f"{result['verified_score']:.4f}"
         )
 
         print(
@@ -801,4 +1161,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
