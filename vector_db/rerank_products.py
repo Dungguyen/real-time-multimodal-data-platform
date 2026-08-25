@@ -47,8 +47,8 @@ SEMANTIC_WEIGHT = 0.70
 RATING_WEIGHT = 0.05
 # QUALITY_WEIGHT = 0.05
 # CATEGORY_WEIGHT = 0.04
-# TITLE_WEIGHT = 0.15
-MULTIMODAL_WEIGHT = 0.15
+TITLE_WEIGHT = 0.10
+MULTIMODAL_WEIGHT = 0.05
 POPULARITY_WEIGHT = 0.05
 VERIFIED_WEIGHT = 0.05
 
@@ -728,6 +728,7 @@ def rerank(
     product_lookup,
     review_lookup,
     top_k,
+    text_query="",
 ):
 
     results = []
@@ -822,6 +823,20 @@ def rerank(
             asin = metadata.get(
                 "asin"
             )
+            
+        # ---------------------------------------------------------
+        # Title relevance
+        # ---------------------------------------------------------
+
+        title = metadata.get(
+            "title",
+            ""
+        )
+
+        title_relevance_score = calculate_title_relevance(
+            title = title,
+            query = text_query,
+        )
 
         # ------------------------------------------------------------------
         # Review statistics
@@ -891,6 +906,11 @@ def rerank(
         verified_score = normalize_verified_ratio(
             verified_ratio
         )
+        
+        title_relevance_score = calculate_title_relevance(
+            title=metadata.get("title"),
+            query=text_query,
+        )
 
         multimodal_score = max(
             0.0,
@@ -930,6 +950,11 @@ def rerank(
             VERIFIED_WEIGHT
         * verified_score
         )
+        
+        title_relevance_contribution = (
+            TITLE_WEIGHT
+        * title_relevance_score
+        )
 
 
 # ------------------------------------------------------------------
@@ -946,6 +971,8 @@ def rerank(
             popularity_contribution
             +
             verified_contribution
+            +
+            title_relevance_contribution
         )
 
         result = {
@@ -973,6 +1000,13 @@ def rerank(
             "popularity_score": popularity_score,
 
             "verified_score": verified_score,
+            
+            "title_relevance_score": title_relevance_score,
+            
+             # --------------------------------------------------------------
+            # Score contributions
+            # --------------------------------------------------------------
+
             
             "semantic_contribution":semantic_contribution,
 
@@ -1046,43 +1080,80 @@ def tokenize_text(
     return tokens
 
 def calculate_title_relevance(
-    query: str | None,
-    title: str | None,
-) -> float:
+    query,
+    title,
+):
+
+    if not query or not title:
+        return 0.0
+
+    query = str(query).lower()
+    title = str(title).lower()
+
+    # ---------------------------------------------------------
+    # Normalize text
+    # ---------------------------------------------------------
 
     query_tokens = set(
-        tokenize_text(query)
+        re.findall(
+            r"\b[a-z0-9]+\b",
+            query,
+        )
     )
 
     title_tokens = set(
-        tokenize_text(title)
+        re.findall(
+            r"\b[a-z0-9]+\b",
+            title,
+        )
     )
 
-    if not query_tokens:
-
+    if not query_tokens or not title_tokens:
         return 0.0
 
-    if not title_tokens:
-
-        return 0.0
+    # ---------------------------------------------------------
+    # Token overlap
+    # ---------------------------------------------------------
 
     matched_tokens = (
         query_tokens
-        &
-        title_tokens
+        & title_tokens
     )
 
-    coverage = (
+    token_overlap = (
         len(matched_tokens)
-        /
-        len(query_tokens)
+        / len(query_tokens)
     )
 
-    return float(
+    # ---------------------------------------------------------
+    # Exact phrase bonus
+    # ---------------------------------------------------------
+
+    phrase_bonus = 0.0
+
+    normalized_query = " ".join(
+        query.split()
+    )
+
+    if normalized_query in title:
+        phrase_bonus = 1.0
+
+    # ---------------------------------------------------------
+    # Final title relevance
+    # ---------------------------------------------------------
+
+    title_score = (
+        0.85 * token_overlap
+        +
+        0.15 * phrase_bonus
+    )
+
+    return max(
+        0.0,
         min(
-            coverage,
             1.0,
-        )
+            title_score,
+        ),
     )
 
 def calculate_category_relevance(
