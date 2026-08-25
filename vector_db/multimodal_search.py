@@ -1,6 +1,6 @@
 from pathlib import Path
 import argparse
-
+import json
 import numpy as np
 import torch
 
@@ -83,6 +83,13 @@ def parse_args():
         type=int,
         default=10,
         help="Number of results to return",
+    )
+
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="candidates.json",
+        help="Output file for reranking candidates",
     )
 
     args = parser.parse_args()
@@ -620,6 +627,56 @@ def fuse_candidates(
     return fused_results
 
 
+def save_candidates(
+    candidates,
+    output_path,
+    text_query=None,
+    image_query=None,
+):
+    """
+    Save multimodal fusion candidates for reranking.
+
+    Only the candidates passed to the reranker are saved.
+    """
+
+    output_path = Path(output_path)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    payload = {
+        "query": {
+            "text": text_query,
+            "image": image_query,
+        },
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+    }
+
+    with open(
+        output_path,
+        "w",
+        encoding="utf-8",
+    ) as file:
+
+        json.dump(
+            payload,
+            file,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    print()
+    print(
+        f"Saved {len(candidates)} candidates to:"
+    )
+
+    print(
+        f"  {output_path.resolve()}"
+    )
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -872,6 +929,18 @@ def main():
         fused_results[
             :RERANK_CANDIDATES
         ]
+    )
+
+
+    # ========================================================================  
+    # SAVE CANDIDATES
+    # ========================================================================  
+    
+    save_candidates(
+        rerank_results,
+        args.output,
+        text_query=args.text,
+        image_query=args.image,
     )
 
     # ========================================================================
