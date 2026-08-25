@@ -395,29 +395,47 @@ def fuse_candidates(
     text_map,
     image_map,
 ):
-    """
-    Fuse text and image retrieval results.
-
-    Cases:
-
-    1. Product exists in both modalities:
-
-        0.5 * text_score
-        +
-        0.5 * image_score
-
-    2. Product exists only in text:
-
-        text_score
-
-    3. Product exists only in image:
-
-        image_score
-
-    This prevents missing modalities from
-    artificially cutting the score in half.
-    """
-
+    print() 
+    print("=" * 80) 
+    print("FUSION DEBUG") 
+    print("=" * 80)
+    
+    print(
+        f"Text candidates: " 
+        f"{len(text_map):,}" 
+    ) 
+    print( 
+        f"Image candidates: " 
+        f"{len(image_map):,}" )
+    
+    text_ids = set( text_map.keys() )
+    
+    image_ids = set( image_map.keys() ) 
+    
+    overlap = ( text_ids & image_ids ) 
+    
+    union = ( text_ids | image_ids ) 
+    
+    print( f"Overlap: " f"{len(overlap):,}" )
+    
+    print( f"Union: " f"{len(union):,}" )
+    
+    
+    if overlap: 
+        print()
+        print( "Sample overlapping product IDs:" )
+        
+        for product_id in list( 
+            overlap
+            )[:10]:
+                print( 
+                    f" {product_id}" 
+                )
+        else:
+            print() 
+            print( "WARNING: No overlap between " "text and image candidates." )
+            print("=" * 80)
+    
     candidate_ids = (
         set(text_map.keys())
         |
@@ -623,6 +641,18 @@ def fuse_candidates(
             x["final_score"],
         reverse=True,
     )
+    
+    modality_counts = {} 
+    
+    for item in fused_results: 
+        modality = item.get(
+            "modality", "unknown" 
+        ) 
+        
+        modality_counts[ modality ] = ( modality_counts.get( modality, 0 ) + 1 ) 
+        print() 
+        print( "Modality distribution:" ) 
+        for modality, count in ( modality_counts.items() ): print( f"{modality}: {count}" )
 
     return fused_results
 

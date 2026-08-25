@@ -692,35 +692,41 @@ def load_review_stats_for_candidates(
 # ============================================================================
 # RERANK
 # ============================================================================
-def calculate_multimodal_agreement(candidate):
-    """
-    Measure whether a candidate is supported by both modalities.
+def calculate_multimodal_agreement(
+    candidate,
+):
+    text_score = safe_float(
+        candidate.get(
+            "text_score",
+            0.0,
+        )
+    )
 
-    Both text + image:
-        1.0
-
-    Text-only:
-        0.0
-
-    Image-only:
-        0.0
-    """
+    image_score = safe_float(
+        candidate.get(
+            "image_score",
+            0.0,
+        )
+    )
 
     modality = str(
         candidate.get(
             "modality",
-            ""
+            "",
         )
     ).lower().strip()
 
-    if modality in {
+    if modality not in {
         "text+image",
         "text-image",
         "both",
     }:
-        return 1.0
+        return 0.0
 
-    return 0.0
+    return min(
+        text_score,
+        image_score,
+    )
 
 def rerank(
     candidates,
