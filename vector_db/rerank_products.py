@@ -41,15 +41,14 @@ DEFAULT_TOP_K = 10
 METADATA_BATCH_SIZE = 10_000
 
 # Semantic relevance remains the dominant signal.
-SEMANTIC_WEIGHT = 0.70
+SEMANTIC_WEIGHT = 0.45
 
-# Business signals.
-RATING_WEIGHT = 0.05
-# QUALITY_WEIGHT = 0.05
-# CATEGORY_WEIGHT = 0.04
+RATING_WEIGHT = 0.10
+CATEGORY_WEIGHT = 0.05
 TITLE_WEIGHT = 0.10
-MULTIMODAL_WEIGHT = 0.05
-POPULARITY_WEIGHT = 0.05
+BRAND_WEIGHT = 0.05
+MULTIMODAL_WEIGHT = 0.10
+POPULARITY_WEIGHT = 0.10
 VERIFIED_WEIGHT = 0.05
 
 MIN_REVIEWS_FOR_CONFIDENCE = 5
@@ -832,10 +831,35 @@ def rerank(
             "title",
             ""
         )
+        
+        brand = metadata.get(
+            "brand",
+            "",
+        )       
+
+        category = metadata.get(
+            "category",
+            "",
+        )       
 
         title_relevance_score = calculate_title_relevance(
             title = title,
             query = text_query,
+        )
+        
+        category = metadata.get(
+            "category",
+            ""
+        )
+
+        category_relevance_score = calculate_category_relevance(
+            query=text_query,
+            category=category,
+        )   
+        
+        brand_relevance_score = calculate_brand_relevance(
+            query=text_query,
+            brand=brand,
         )
 
         # ------------------------------------------------------------------
@@ -906,12 +930,7 @@ def rerank(
         verified_score = normalize_verified_ratio(
             verified_ratio
         )
-        
-        title_relevance_score = calculate_title_relevance(
-            title=metadata.get("title"),
-            query=text_query,
-        )
-
+    
         multimodal_score = max(
             0.0,
             min(
@@ -955,6 +974,16 @@ def rerank(
             TITLE_WEIGHT
         * title_relevance_score
         )
+        
+        category_relevance_contribution = (
+            CATEGORY_WEIGHT
+            * category_relevance_score
+        )
+        
+        brand_relevance_contribution = (
+            BRAND_WEIGHT
+            * brand_relevance_score
+        )
 
 
 # ------------------------------------------------------------------
@@ -973,6 +1002,10 @@ def rerank(
             verified_contribution
             +
             title_relevance_contribution
+            +
+            category_relevance_contribution
+            +
+            brand_relevance_contribution
         )
 
         result = {
@@ -1002,6 +1035,16 @@ def rerank(
             "verified_score": verified_score,
             
             "title_relevance_score": title_relevance_score,
+            
+            "title_relevance_contribution": title_relevance_contribution,
+            
+            "category_relevance_score":category_relevance_score,
+
+            "category_relevance_contribution":category_relevance_contribution,
+            
+            "brand_relevance_score":brand_relevance_score,
+
+            "brand_relevance_contribution":brand_relevance_contribution,
             
              # --------------------------------------------------------------
             # Score contributions
@@ -1083,7 +1126,6 @@ def calculate_title_relevance(
     query,
     title,
 ):
-
     if not query or not title:
         return 0.0
 
@@ -1091,15 +1133,35 @@ def calculate_title_relevance(
     title = str(title).lower()
 
     # ---------------------------------------------------------
+    # Stopwords
+    # ---------------------------------------------------------
+
+    stopwords = {
+        "for",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "with",
+        "of",
+        "to",
+        "in",
+        "on",
+    }
+
+    # ---------------------------------------------------------
     # Normalize text
     # ---------------------------------------------------------
 
-    query_tokens = set(
-        re.findall(
+    query_tokens = {
+        token
+        for token in re.findall(
             r"\b[a-z0-9]+\b",
             query,
         )
-    )
+        if token not in stopwords
+    }
 
     title_tokens = set(
         re.findall(
@@ -1117,25 +1179,31 @@ def calculate_title_relevance(
 
     matched_tokens = (
         query_tokens
-        & title_tokens
+        &
+        title_tokens
     )
 
     token_overlap = (
         len(matched_tokens)
-        / len(query_tokens)
+        /
+        len(query_tokens)
     )
 
     # ---------------------------------------------------------
     # Exact phrase bonus
     # ---------------------------------------------------------
 
-    phrase_bonus = 0.0
-
     normalized_query = " ".join(
         query.split()
     )
 
-    if normalized_query in title:
+    normalized_title = " ".join(
+        title.split()
+    )
+
+    phrase_bonus = 0.0
+
+    if normalized_query in normalized_title:
         phrase_bonus = 1.0
 
     # ---------------------------------------------------------
@@ -1345,6 +1413,57 @@ def calculate_verified_score(
             ),
         )
     )
+    
+def calculate_brand_relevance(
+    query: str | None,
+    brand,
+) -> float:
+
+    query_tokens = set(
+        tokenize_text(query)
+    )
+
+    if not query_tokens:
+        return 0.0
+
+    if brand is None:
+        return 0.0
+
+    if isinstance(
+        brand,
+        list,
+    ):
+        brand_text = " ".join(
+            str(item)
+            for item in brand
+        )
+    else:
+        brand_text = str(
+            brand
+        )
+
+    brand_tokens = set(
+        tokenize_text(
+            brand_text
+        )
+    )
+
+    if not brand_tokens:
+        return 0.0
+
+    matched = (
+        query_tokens
+        &
+        brand_tokens
+    )
+
+    return float(
+        len(matched)
+        /
+        len(query_tokens)
+    )
+    
+    
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -1436,6 +1555,9 @@ def main():
 # LOAD CANDIDATES
 # ============================================================================
 
+    text_query = ""
+
+    
     if isinstance(
         candidate_data,
         dict,
@@ -1456,11 +1578,16 @@ def main():
             "query",
             {},
         )
+        
+        text_query = query_info.get(
+            "text",
+            "",
+        )
 
         print()
         print(
             f"Text query:  "
-            f"{query_info.get('text')}"
+            f"{text_query}"
         )
 
         print(
@@ -1568,6 +1695,7 @@ def main():
         product_lookup=product_lookup,
         review_lookup=review_lookup,
         top_k=args.top_k,
+        text_query=text_query,
     )
 
     # =========================================================================
@@ -1597,6 +1725,46 @@ def main():
         print(
             f"Semantic score:   "
             f"{result['semantic_score']:.4f}"
+        )
+        
+        print(
+            f"Title relevance:  "
+            f"{result['title_relevance_score']:.4f}"
+        )
+
+        print(
+            f"Title contribution:"
+            f" {result['title_relevance_contribution']:.4f}"
+        )
+        
+        print(
+            f"Category relevance: "
+            f"{result['category_relevance_score']:.4f}"
+        )
+
+        print(
+            f"Category contribution: "
+            f"{result['category_relevance_contribution']:.4f}"
+        )
+        
+        print(
+            f"Multimodal score: "
+            f"{result['multimodal_score']:.4f}"
+        )
+
+        print(
+            f"Multimodal contribution: "
+            f"{result['multimodal_contribution']:.4f}"
+        )
+        
+        print(
+            f"Brand relevance:  "
+            f"{result['brand_relevance_score']:.4f}"
+        )
+
+        print(
+            f"Brand contribution: "
+            f"{result['brand_relevance_contribution']:.4f}"
         )
 
         print(
