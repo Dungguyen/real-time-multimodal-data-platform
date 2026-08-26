@@ -216,6 +216,7 @@ def get_candidate_keys(candidates):
 def load_product_metadata_for_candidates(
     candidate_product_ids,
     candidate_asins,
+    batch_size=METADATA_BATCH_SIZE,
 ):
     """
     Scan product_summary.parquet in batches.
@@ -257,7 +258,7 @@ def load_product_metadata_for_candidates(
     total_processed = 0
 
     for batch in parquet_file.iter_batches(
-        batch_size=METADATA_BATCH_SIZE
+        batch_size=batch_size
     ):
 
         table = batch
@@ -443,6 +444,8 @@ def load_product_metadata_for_candidates(
 def load_review_stats_for_candidates(
     candidate_product_ids,
     candidate_asins,
+    batch_size=METADATA_BATCH_SIZE,
+
 ):
     """
     Scan review statistics in batches.
@@ -486,7 +489,7 @@ def load_review_stats_for_candidates(
     total_processed = 0
 
     for batch in parquet_file.iter_batches(
-        batch_size=METADATA_BATCH_SIZE
+        batch_size=batch_size
     ):
 
         table = batch
@@ -823,6 +826,13 @@ def rerank(
             {},
         )
 
+        if not metadata:
+            print(
+                f"[WARNING] Metadata missing for "
+                f"product_id={product_id}, "
+                f"asin={asin}"
+            )
+
         if not asin:
 
             asin = metadata.get(
@@ -848,9 +858,39 @@ def rerank(
             "",
         )       
 
+
+        if text_query:
+            print(
+                f"\nDEBUG QUERY: {text_query}"
+            )
+
+            print(
+                f"DEBUG TITLE: {title}"
+            )
+
+            print(
+                f"DEBUG CATEGORY: {category}"
+            )
+
+            print(
+                f"DEBUG BRAND: {brand}"
+            )
+
         title_relevance_score = calculate_title_relevance(
             title = title,
             query = text_query,
+        )
+
+        print()
+        print("DEBUG TITLE SCORE")
+        print(
+            f"TITLE: {title}"
+        )
+        print(
+            f"QUERY: {text_query}"
+        )
+        print(
+            f"TITLE SCORE: {title_relevance_score:.4f}"
         )
         
         category = metadata.get(
@@ -1128,6 +1168,40 @@ def tokenize_text(
 
     return tokens
 
+QUERY_SYNONYMS = {
+
+    "headphones": {
+        "headphones",
+        "headphone",
+        "headset",
+        "headsets",
+        "earphones",
+        "earphone",
+        "earbuds",
+    },
+
+    "gaming": {
+        "gaming",
+        "gamer",
+        "game",
+    },
+
+    "wireless": {
+        "wireless",
+        "bluetooth",
+    },
+
+    "noise": {
+        "noise",
+        "noise-canceling",
+        "noise-cancelling",
+    },
+
+    "canceling": {
+        "canceling",
+        "cancelling",
+    },
+}
 def calculate_title_relevance(
     query,
     title,
@@ -1138,74 +1212,46 @@ def calculate_title_relevance(
     query = str(query).lower()
     title = str(title).lower()
 
-    # ---------------------------------------------------------
-    # Stopwords
-    # ---------------------------------------------------------
+    query_term_score = calculate_query_term_relevance(
+        query=query,
+        text=title,
+    )
 
-    stopwords = {
-        "for",
-        "the",
-        "a",
-        "an",
-        "and",
-        "or",
-        "with",
-        "of",
-        "to",
-        "in",
-        "on",
-    }
+    print(
+        f"Query term score: "
+        f"{query_term_score:.4f}"
+    )
 
     # ---------------------------------------------------------
-    # Normalize text
+    # Tokenize
     # ---------------------------------------------------------
 
-    query_tokens = {
+    query_tokens = [
         token
         for token in re.findall(
             r"\b[a-z0-9]+\b",
             query,
         )
         if token not in stopwords
-    }
+    ]
 
-    title_tokens = set(
-        re.findall(
-            r"\b[a-z0-9]+\b",
-            title,
-        )
+    title_tokens = re.findall(
+        r"\b[a-z0-9]+\b",
+        title,
     )
 
     if not query_tokens or not title_tokens:
         return 0.0
 
-    # ---------------------------------------------------------
-    # Token overlap
-    # ---------------------------------------------------------
-
-    matched_tokens = (
-        query_tokens
-        &
-        title_tokens
-    )
-
-    token_overlap = (
-        len(matched_tokens)
-        /
-        len(query_tokens)
-    )
+    title_token_set = set(title_tokens)
 
     # ---------------------------------------------------------
-    # Exact phrase bonus
+    # Exact phrase
     # ---------------------------------------------------------
 
-    normalized_query = " ".join(
-        query.split()
-    )
+    normalized_query = " ".join(query_tokens)
 
-    normalized_title = " ".join(
-        title.split()
-    )
+    normalized_title = " ".join(title_tokens)
 
     phrase_bonus = 0.0
 
@@ -1213,13 +1259,67 @@ def calculate_title_relevance(
         phrase_bonus = 1.0
 
     # ---------------------------------------------------------
+    # Ordered match
+    # ---------------------------------------------------------
+
+    ordered_match = 0.0
+
+    title_position = 0
+
+    for query_token in query_tokens:
+
+        found = False
+
+        for index in range(
+            title_position,
+            len(title_tokens),
+        ):
+
+            if title_tokens[index] == query_token:
+
+                found = True
+                title_position = index + 1
+
+                break
+
+        if not found:
+            break
+
+    if query_tokens:
+        matched_ordered = 0
+
+        title_position = 0
+
+        for query_token in query_tokens:
+
+            for index in range(
+                title_position,
+                len(title_tokens),
+            ):
+
+                if title_tokens[index] == query_token:
+
+                    matched_ordered += 1
+                    title_position = index + 1
+
+                    break
+
+        ordered_match = (
+            matched_ordered
+            /
+            len(query_tokens)
+        )
+
+    # ---------------------------------------------------------
     # Final title relevance
     # ---------------------------------------------------------
 
     title_score = (
-        0.85 * token_overlap
+        0.70 * query_term_score
         +
-        0.15 * phrase_bonus
+        0.20 * phrase_bonus
+        +
+        0.10 * ordered_match
     )
 
     return max(
@@ -1468,7 +1568,70 @@ def calculate_brand_relevance(
         /
         len(query_tokens)
     )
+
+stopwords = {
+        "for",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "with",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "by",
+        "from",
+        "is",
+        "are",
+        "this",
+        "that",
+    }
+
+def calculate_query_term_relevance(
+    query,
+    text,
+):
+    if not query or not text:
+        return 0.0
+
+    query = str(query).lower()
+    text = str(text).lower()
+
     
+
+    query_tokens = [
+        token
+        for token in re.findall(
+            r"\b[a-z0-9]+\b",
+            query,
+        )
+        if token not in QUERY_STOPWORDS
+    ]
+
+    text_tokens = set(
+        re.findall(
+            r"\b[a-z0-9]+\b",
+            text,
+        )
+    )
+
+    if not query_tokens or not text_tokens:
+        return 0.0
+
+    matched_tokens = {
+        token
+        for token in query_tokens
+        if token in text_tokens
+    }
+
+    return (
+        len(matched_tokens)
+        /
+        len(set(query_tokens))
+    )
     
 # ============================================================================
 # MAIN
@@ -1677,6 +1840,7 @@ def main():
         load_product_metadata_for_candidates(
             candidate_product_ids,
             candidate_asins,
+            batch_size=args.batch_size,
         )
     )
 
@@ -1684,6 +1848,7 @@ def main():
         load_review_stats_for_candidates(
             candidate_product_ids,
             candidate_asins,
+            batch_size=args.batch_size,
         )
     )
 
