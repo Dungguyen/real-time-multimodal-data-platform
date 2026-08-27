@@ -98,12 +98,20 @@ def get_first_image_url(image_urls):
     Extract the first valid image URL.
     """
 
-    if not image_urls:
+    if image_urls is None:
         return None
 
-    if isinstance(image_urls, list):
+    try:
+        if len(image_urls) == 0:
+            return None
+    except TypeError:
+        return None
 
-        for url in image_urls:
+    for url in image_urls:
+
+        if url:
+
+            url = str(url).strip()
 
             if url:
                 return url
@@ -124,14 +132,16 @@ def load_model():
         MODEL_NAME
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
 
     model = model.to(device)
     model.eval()
 
-    print(
-        f"Model loaded."
-    )
+    print("Model loaded.")
 
     print(
         f"Device: {device}"
@@ -169,7 +179,9 @@ def encode_images(
             pixel_values=pixel_values
         )
 
-        pooled_output = vision_outputs.pooler_output
+        pooled_output = (
+            vision_outputs.pooler_output
+        )
 
         image_features = model.visual_projection(
             pooled_output
@@ -193,9 +205,9 @@ def encode_images(
 
 def write_shard(
     shard_number,
+    image_urls,
     product_ids,
     asins,
-    image_urls,
     embeddings,
 ):
 
@@ -206,28 +218,31 @@ def write_shard(
 
     table = pa.table(
         {
-            "canonical_product_id": pa.array(
-                product_ids,
-                type=pa.string(),
-            ),
-
-            "asin": pa.array(
-                asins,
-                type=pa.string(),
-            ),
-
+            # One row = one UNIQUE image URL.
             "image_url": pa.array(
                 image_urls,
                 type=pa.string(),
             ),
 
+            # Keep ALL canonical products using this image.
+            "canonical_product_ids": pa.array(
+                product_ids,
+                type=pa.list_(pa.string()),
+            ),
+
+            # Keep ALL ASINs using this image.
+            "asins": pa.array(
+                asins,
+                type=pa.list_(pa.string()),
+            ),
+
             "embedding_model": pa.array(
-                [MODEL_NAME] * len(product_ids),
+                [MODEL_NAME] * len(image_urls),
                 type=pa.string(),
             ),
 
             "embedding_dimension": pa.array(
-                [embeddings.shape[1]] * len(product_ids),
+                [embeddings.shape[1]] * len(image_urls),
                 type=pa.int32(),
             ),
 
@@ -245,6 +260,116 @@ def write_shard(
     )
 
     return output
+
+
+def load_completed_urls(existing_shards):
+    """
+    Read image_url from already-created NEW-format shards.
+
+    This allows the script to resume without embedding the same
+    image URL again.
+
+    Old-format shards are detected and ignored. They must not be
+    mixed with the new schema.
+    """
+
+    completed_urls = set()
+
+    for shard in existing_shards:
+
+        try:
+
+            schema = pq.read_schema(shard)
+
+            names = set(schema.names)
+
+            if "image_url" not in names:
+                print(
+                    f"Warning: shard has no image_url, "
+                    f"ignoring: {shard.name}"
+                )
+                continue
+
+            shard_table = pq.read_table(
+                shard,
+                columns=["image_url"],
+            )
+
+            for url in shard_table[
+                "image_url"
+            ].to_pylist():
+
+                if url:
+                    completed_urls.add(url)
+
+        except Exception as exc:
+
+            print(
+                f"Warning: ignoring invalid shard "
+                f"{shard}: {exc}"
+            )
+
+    return completed_urls
+
+
+def build_unique_images(
+    product_ids,
+    asins,
+    all_image_urls,
+):
+    """
+    Build:
+
+        image_url
+            -> all canonical_product_ids
+            -> all ASINs
+
+    The same image URL is stored only once.
+
+    Example:
+
+        image.jpg
+            -> [product_A, product_B, product_C]
+            -> [ASIN_A, ASIN_B, ASIN_C]
+    """
+
+    image_mapping = {}
+
+    for product_id, asin, image_urls in zip(
+        product_ids,
+        asins,
+        all_image_urls,
+    ):
+
+        image_url = get_first_image_url(
+            image_urls
+        )
+
+        if image_url is None:
+            continue
+
+        if image_url not in image_mapping:
+
+            image_mapping[image_url] = {
+                "canonical_product_ids": [],
+                "asins": [],
+            }
+
+        entry = image_mapping[image_url]
+
+        if product_id not in entry[
+            "canonical_product_ids"
+        ]:
+
+            entry[
+                "canonical_product_ids"
+            ].append(product_id)
+
+        if asin not in entry["asins"]:
+
+            entry["asins"].append(asin)
+
+    return image_mapping
 
 
 def main():
@@ -327,6 +452,43 @@ def main():
     ].to_pylist()
 
     # ------------------------------------------------------------------
+    # Deduplicate image URLs BEFORE downloading / embedding
+    # ------------------------------------------------------------------
+
+    print()
+    print("Deduplicating image URLs...")
+
+    image_mapping = build_unique_images(
+        product_ids,
+        asins,
+        all_image_urls,
+    )
+
+    unique_image_urls = list(
+        image_mapping.keys()
+    )
+
+    products_with_images = sum(
+        len(entry["canonical_product_ids"])
+        for entry in image_mapping.values()
+    )
+
+    print(
+        f"Products with images: "
+        f"{products_with_images:,}"
+    )
+
+    print(
+        f"Unique image URLs:    "
+        f"{len(unique_image_urls):,}"
+    )
+
+    print(
+        f"Duplicate references removed: "
+        f"{products_with_images - len(unique_image_urls):,}"
+    )
+
+    # ------------------------------------------------------------------
     # Find existing shards
     # ------------------------------------------------------------------
 
@@ -336,40 +498,40 @@ def main():
         )
     )
 
-    completed_records = 0
-
-    for shard in existing_shards:
-
-        try:
-
-            shard_table = pq.read_table(
-                shard,
-                columns=[
-                    "canonical_product_id"
-                ],
-            )
-
-            completed_records += (
-                shard_table.num_rows
-            )
-
-        except Exception:
-
-            print(
-                f"Warning: ignoring invalid shard: "
-                f"{shard}"
-            )
-
-    print(
-        f"Completed records:  "
-        f"{completed_records:,}"
+    completed_urls = load_completed_urls(
+        existing_shards
     )
 
-    if completed_records >= total_products:
+    print(
+        f"Existing shards:      "
+        f"{len(existing_shards):,}"
+    )
+
+    print(
+        f"Already embedded URLs: "
+        f"{len(completed_urls):,}"
+    )
+
+    # ------------------------------------------------------------------
+    # Only process image URLs that do not already have embeddings.
+    # ------------------------------------------------------------------
+
+    pending_image_urls = [
+        url
+        for url in unique_image_urls
+        if url not in completed_urls
+    ]
+
+    print(
+        f"Pending unique images: "
+        f"{len(pending_image_urls):,}"
+    )
+
+    if not pending_image_urls:
 
         print()
         print(
-            "All requested records already "
+            "All unique image URLs already "
             "have embeddings."
         )
 
@@ -385,8 +547,6 @@ def main():
     # Process batches
     # ------------------------------------------------------------------
 
-    next_index = completed_records
-
     shard_number = (
         len(existing_shards) + 1
     )
@@ -396,29 +556,22 @@ def main():
 
     print()
     print("=" * 80)
-    print("DOWNLOADING IMAGES + GENERATING EMBEDDINGS")
+    print("DOWNLOADING UNIQUE IMAGES + GENERATING EMBEDDINGS")
     print("=" * 80)
 
-    while next_index < total_products:
+    # tqdm makes progress much easier to monitor.
+    for batch_start in tqdm(
+        range(
+            0,
+            len(pending_image_urls),
+            CLIP_BATCH_SIZE,
+        ),
+        desc="Embedding batches",
+    ):
 
-        end_index = min(
-            next_index + CLIP_BATCH_SIZE,
-            total_products,
-        )
-
-        batch_product_ids = product_ids[
-            next_index:end_index
-        ]
-
-        batch_asins = asins[
-            next_index:end_index
-        ]
-
-        batch_urls = [
-            get_first_image_url(urls)
-            for urls in all_image_urls[
-                next_index:end_index
-            ]
+        batch_urls = pending_image_urls[
+            batch_start:
+            batch_start + CLIP_BATCH_SIZE
         ]
 
         # --------------------------------------------------------------
@@ -426,8 +579,6 @@ def main():
         # --------------------------------------------------------------
 
         downloaded_images = []
-        valid_product_ids = []
-        valid_asins = []
         valid_urls = []
 
         with ThreadPoolExecutor(
@@ -442,7 +593,6 @@ def main():
                 for i, url in enumerate(
                     batch_urls
                 )
-                if url
             }
 
             results = {}
@@ -454,11 +604,8 @@ def main():
                 index = futures[future]
 
                 try:
-
                     image = future.result()
-
                 except Exception:
-
                     image = None
 
                 results[index] = image
@@ -468,7 +615,7 @@ def main():
         # --------------------------------------------------------------
 
         for i in range(
-            len(batch_product_ids)
+            len(batch_urls)
         ):
 
             image = results.get(i)
@@ -481,14 +628,6 @@ def main():
 
             downloaded_images.append(
                 image
-            )
-
-            valid_product_ids.append(
-                batch_product_ids[i]
-            )
-
-            valid_asins.append(
-                batch_asins[i]
             )
 
             valid_urls.append(
@@ -508,24 +647,40 @@ def main():
                 device,
             )
 
+            batch_product_ids = [
+                image_mapping[url][
+                    "canonical_product_ids"
+                ]
+                for url in valid_urls
+            ]
+
+            batch_asins = [
+                image_mapping[url][
+                    "asins"
+                ]
+                for url in valid_urls
+            ]
+
             shard_path = write_shard(
                 shard_number,
-                valid_product_ids,
-                valid_asins,
                 valid_urls,
+                batch_product_ids,
+                batch_asins,
                 embeddings,
             )
 
             total_success += len(
-                valid_product_ids
+                valid_urls
             )
 
             print(
                 f"Shard {shard_number:>6} | "
-                f"records={next_index + len(batch_product_ids):,}/"
-                f"{total_products:,} | "
-                f"success={len(valid_product_ids):>3} | "
-                f"failed={len(batch_product_ids) - len(valid_product_ids):>3} | "
+                f"unique images="
+                f"{batch_start + len(batch_urls):,}/"
+                f"{len(pending_image_urls):,} | "
+                f"embedded={len(valid_urls):>3} | "
+                f"failed="
+                f"{len(batch_urls) - len(valid_urls):>3} | "
                 f"output={shard_path.name}"
             )
 
@@ -535,12 +690,11 @@ def main():
 
             print(
                 f"Batch skipped | "
-                f"records={next_index + len(batch_product_ids):,}/"
-                f"{total_products:,} | "
+                f"images="
+                f"{batch_start + len(batch_urls):,}/"
+                f"{len(pending_image_urls):,} | "
                 f"all downloads failed"
             )
-
-        next_index = end_index
 
     # ------------------------------------------------------------------
     # Summary
@@ -552,30 +706,40 @@ def main():
     print("=" * 80)
 
     print(
-        f"Products processed: "
+        f"Products loaded:        "
         f"{total_products:,}"
     )
 
     print(
-        f"Successful images:  "
+        f"Unique image URLs:      "
+        f"{len(unique_image_urls):,}"
+    )
+
+    print(
+        f"Already embedded:       "
+        f"{len(completed_urls):,}"
+    )
+
+    print(
+        f"New images embedded:    "
         f"{total_success:,}"
     )
 
     print(
-        f"Failed images:      "
+        f"Failed downloads:       "
         f"{total_failed:,}"
     )
 
     print(
-        f"Embedding dimension: 512"
+        f"Embedding dimension:    512"
     )
 
     print(
-        f"Model:              {MODEL_NAME}"
+        f"Model:                  {MODEL_NAME}"
     )
 
     print(
-        f"Shard directory:    {SHARD_DIR}"
+        f"Shard directory:        {SHARD_DIR}"
     )
 
 

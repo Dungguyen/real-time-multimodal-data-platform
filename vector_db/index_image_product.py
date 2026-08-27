@@ -128,7 +128,7 @@ def main():
         )
 
     print(
-        f"Shard files:     "
+        f"Shard files: "
         f"{len(shard_files):,}"
     )
 
@@ -202,7 +202,15 @@ def main():
                 "embedding"
             ].to_pylist()
 
-            points = []
+            # ----------------------------------------------------------
+            # Group rows by image_url
+            #
+            # One image_url = one Qdrant vector
+            #
+            # But keep ALL products associated with that image.
+            # ----------------------------------------------------------
+
+            image_groups = {}
 
             for (
                 product_id,
@@ -223,6 +231,15 @@ def main():
                 try:
 
                     # --------------------------------------------------
+                    # Validate image URL
+                    # --------------------------------------------------
+
+                    if not image_url:
+
+                        failed += 1
+                        continue
+
+                    # --------------------------------------------------
                     # Validate embedding
                     # --------------------------------------------------
 
@@ -236,7 +253,7 @@ def main():
                         print(
                             f"WARNING: invalid "
                             f"embedding dimension "
-                            f"for {product_id}: "
+                            f"for {image_url}: "
                             f"{len(embedding)}"
                         )
 
@@ -244,15 +261,103 @@ def main():
                         continue
 
                     # --------------------------------------------------
+                    # First occurrence of image_url
+                    # --------------------------------------------------
+
+                    if image_url not in image_groups:
+
+                        image_groups[image_url] = {
+                            "embedding": embedding,
+                            "embedding_model": embedding_model,
+                            "embedding_dimension": (
+                                embedding_dimension
+                            ),
+                            "products": [],
+                        }
+
+                    # --------------------------------------------------
+                    # Add product mapping
+                    #
+                    # Same image can belong to many products.
+                    # --------------------------------------------------
+
+                    image_groups[
+                        image_url
+                    ]["products"].append(
+                        {
+                            "canonical_product_id":
+                                product_id,
+
+                            "asin":
+                                asin,
+                        }
+                    )
+
+                except Exception as exc:
+
+                    print(
+                        f"WARNING: failed to "
+                        f"group image "
+                        f"{image_url}: {exc}"
+                    )
+
+                    failed += 1
+
+            # ----------------------------------------------------------
+            # Create Qdrant points
+            # ----------------------------------------------------------
+
+            points = []
+
+            for (
+                image_url,
+                image_data,
+            ) in image_groups.items():
+
+                try:
+
+                    embedding = image_data[
+                        "embedding"
+                    ]
+
+                    # --------------------------------------------------
                     # Deterministic UUID
+                    #
+                    # IMPORTANT:
+                    # Point ID is based ONLY on image_url.
+                    #
+                    # Therefore:
+                    #
+                    # same image_url
+                    #       ↓
+                    # one Qdrant point
+                    #
                     # --------------------------------------------------
 
                     point_id = str(
                         uuid.uuid5(
                             uuid.NAMESPACE_URL,
-                            f"{product_id}|{image_url}",
+                            image_url,
                         )
                     )
+
+                    # --------------------------------------------------
+                    # Products mapped to this image
+                    # --------------------------------------------------
+
+                    products = image_data[
+                        "products"
+                    ]
+
+                    canonical_product_ids = [
+                        product["canonical_product_id"]
+                        for product in products
+                    ]
+
+                    asins = [
+                        product["asin"]
+                        for product in products
+                    ]
 
                     # --------------------------------------------------
                     # Create Qdrant point
@@ -265,20 +370,24 @@ def main():
                             vector=embedding,
 
                             payload={
-                                "canonical_product_id":
-                                    product_id,
-
-                                "asin":
-                                    asin,
-
                                 "image_url":
                                     image_url,
 
+                                "canonical_product_ids":
+                                    canonical_product_ids,
+
+                                "asins":
+                                    asins,
+
                                 "embedding_model":
-                                    embedding_model,
+                                    image_data[
+                                        "embedding_model"
+                                    ],
 
                                 "embedding_dimension":
-                                    embedding_dimension,
+                                    image_data[
+                                        "embedding_dimension"
+                                    ],
                             },
                         )
                     )
@@ -287,8 +396,8 @@ def main():
 
                     print(
                         f"WARNING: failed to "
-                        f"prepare point "
-                        f"{product_id}: {exc}"
+                        f"prepare image point "
+                        f"{image_url}: {exc}"
                     )
 
                     failed += 1
@@ -301,7 +410,9 @@ def main():
 
                 client.upsert(
                     collection_name=COLLECTION_NAME,
+
                     points=points,
+
                     wait=True,
                 )
 
@@ -327,22 +438,22 @@ def main():
     print("=" * 80)
 
     print(
-        f"Embeddings processed: "
+        f"Unique image embeddings processed: "
         f"{processed:,}"
     )
 
     print(
-        f"Failed embeddings:    "
+        f"Failed embeddings: "
         f"{failed:,}"
     )
 
     print(
-        f"Qdrant points:        "
+        f"Qdrant points: "
         f"{info.points_count:,}"
     )
 
     print(
-        f"Collection:           "
+        f"Collection: "
         f"{COLLECTION_NAME}"
     )
 
