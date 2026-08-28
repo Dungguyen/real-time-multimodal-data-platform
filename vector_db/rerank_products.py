@@ -41,15 +41,15 @@ DEFAULT_TOP_K = 10
 METADATA_BATCH_SIZE = 10_000
 
 # Semantic relevance remains the dominant signal.
-SEMANTIC_WEIGHT = 0.55
+SEMANTIC_WEIGHT = 0.50
 
 RATING_WEIGHT = 0.05
-CATEGORY_WEIGHT = 0.05
-TITLE_WEIGHT = 0.15
+CATEGORY_WEIGHT = 0.07
+TITLE_WEIGHT = 0.18
 BRAND_WEIGHT = 0.03
-MULTIMODAL_WEIGHT = 0.10
-POPULARITY_WEIGHT = 0.04
-VERIFIED_WEIGHT = 0.03
+MULTIMODAL_WEIGHT = 0.08
+POPULARITY_WEIGHT = 0.05
+VERIFIED_WEIGHT = 0.04
 
 MIN_REVIEWS_FOR_CONFIDENCE = 5
 
@@ -805,10 +805,12 @@ def rerank(
     # Both modalities available.
     # Give a stronger score when both modalities agree.
             semantic_score = (
-                0.60 * text_score
+                0.50 * text_score
                 +
-                0.40 * image_score
+                0.50 * image_score
             )
+        else: 
+            semantic_score = 0.0
 
         semantic_score = max(
             0.0,

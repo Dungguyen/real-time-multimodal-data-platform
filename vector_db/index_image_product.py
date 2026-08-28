@@ -29,6 +29,23 @@ BATCH_SIZE = 256
 VECTOR_SIZE = 512
 
 
+def make_point_id(image_url):
+    """
+    Generate deterministic Qdrant point ID
+    based ONLY on image_url.
+
+    Therefore:
+        same image_url -> same Qdrant point
+    """
+
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            image_url,
+        )
+    )
+
+
 def main():
 
     print("=" * 80)
@@ -133,11 +150,27 @@ def main():
     )
 
     # ------------------------------------------------------------------
-    # Process shards
+    # Global image tracking
+    #
+    # This set guarantees that an image_url that has already been
+    # processed will not be treated as a new embedding.
+    #
+    # We only store URLs here, NOT embeddings.
+    # ------------------------------------------------------------------
+
+    seen_image_urls = set()
+
+    # ------------------------------------------------------------------
+    # Counters
     # ------------------------------------------------------------------
 
     processed = 0
+    duplicated = 0
     failed = 0
+
+    # ------------------------------------------------------------------
+    # Process shards
+    # ------------------------------------------------------------------
 
     for shard_number, shard_file in enumerate(
         shard_files,
@@ -169,25 +202,25 @@ def main():
             batch_size=BATCH_SIZE,
 
             columns=[
-                "canonical_product_id",
-                "asin",
                 "image_url",
+                "canonical_product_ids",
+                "asins",
                 "embedding_model",
                 "embedding_dimension",
                 "embedding",
-            ],
+            ]
         ):
-
-            product_ids = batch[
-                "canonical_product_id"
-            ].to_pylist()
-
-            asins = batch[
-                "asin"
-            ].to_pylist()
 
             image_urls = batch[
                 "image_url"
+            ].to_pylist()
+
+            canonical_product_ids = batch[
+                "canonical_product_ids"
+            ].to_pylist()
+
+            asins = batch[
+                "asins"
             ].to_pylist()
 
             embedding_models = batch[
@@ -203,26 +236,25 @@ def main():
             ].to_pylist()
 
             # ----------------------------------------------------------
-            # Group rows by image_url
+            # Group rows inside current batch
             #
-            # One image_url = one Qdrant vector
-            #
-            # But keep ALL products associated with that image.
+            # If the same image appears multiple times in this batch,
+            # only keep ONE embedding.
             # ----------------------------------------------------------
 
             image_groups = {}
 
             for (
-                product_id,
-                asin,
                 image_url,
+                product_ids,
+                asin_list,
                 embedding_model,
                 embedding_dimension,
                 embedding,
             ) in zip(
-                product_ids,
-                asins,
                 image_urls,
+                canonical_product_ids,
+                asins,
                 embedding_models,
                 embedding_dimensions,
                 embeddings,
@@ -260,54 +292,78 @@ def main():
                         failed += 1
                         continue
 
+                # --------------------------------------------------------------
+                # Validate mapping
+                # --------------------------------------------------------------
+
+                    product_ids = product_ids or []
+                    asins = asins or []
+
                     # --------------------------------------------------
-                    # First occurrence of image_url
+                    # New image inside this batch
                     # --------------------------------------------------
 
                     if image_url not in image_groups:
 
                         image_groups[image_url] = {
                             "embedding": embedding,
-                            "embedding_model": embedding_model,
-                            "embedding_dimension": (
-                                embedding_dimension
-                            ),
+
+                            "embedding_model":
+                                embedding_model,
+
+                            "embedding_dimension":
+                                embedding_dimension,
+
                             "products": [],
                         }
 
                     # --------------------------------------------------
                     # Add product mapping
-                    #
-                    # Same image can belong to many products.
                     # --------------------------------------------------
 
-                    image_groups[
-                        image_url
-                    ]["products"].append(
-                        {
-                            "canonical_product_id":
-                                product_id,
+                    for product_id, asin in zip(
+                        product_ids,
+                        asin_list,
+                    ):
 
-                            "asin":
-                                asin,
-                        }
-                    )
+                        if not product_id:
+                            continue
+
+                        image_groups[
+                        image_url
+                        ]["products"].append(
+                            {
+                                "canonical_product_id":
+                                    product_id,
+
+                                "asin":
+                                    asin,
+                            }
+                        )
 
                 except Exception as exc:
 
                     print(
                         f"WARNING: failed to "
-                        f"group image "
-                        f"{image_url}: {exc}"
+                        f"process row: {exc}"
                     )
 
                     failed += 1
 
             # ----------------------------------------------------------
-            # Create Qdrant points
+            # Prepare new points
             # ----------------------------------------------------------
 
-            points = []
+            new_points = []
+
+            # ----------------------------------------------------------
+            # Existing point updates
+            #
+            # When an image_url appeared in an earlier batch/shard,
+            # we need to merge the new products into the existing point.
+            # ----------------------------------------------------------
+
+            existing_updates = []
 
             for (
                 image_url,
@@ -316,111 +372,256 @@ def main():
 
                 try:
 
-                    embedding = image_data[
-                        "embedding"
-                    ]
-
-                    # --------------------------------------------------
-                    # Deterministic UUID
-                    #
-                    # IMPORTANT:
-                    # Point ID is based ONLY on image_url.
-                    #
-                    # Therefore:
-                    #
-                    # same image_url
-                    #       ↓
-                    # one Qdrant point
-                    #
-                    # --------------------------------------------------
-
-                    point_id = str(
-                        uuid.uuid5(
-                            uuid.NAMESPACE_URL,
-                            image_url,
-                        )
+                    point_id = make_point_id(
+                        image_url
                     )
 
-                    # --------------------------------------------------
-                    # Products mapped to this image
-                    # --------------------------------------------------
+                    # ==================================================
+                    # CASE 1
+                    # New image_url
+                    # ==================================================
 
-                    products = image_data[
-                        "products"
-                    ]
+                    if image_url not in seen_image_urls:
 
-                    canonical_product_ids = [
-                        product["canonical_product_id"]
-                        for product in products
-                    ]
+                        products = image_data[
+                            "products"
+                        ]
 
-                    asins = [
-                        product["asin"]
-                        for product in products
-                    ]
-
-                    # --------------------------------------------------
-                    # Create Qdrant point
-                    # --------------------------------------------------
-
-                    points.append(
-                        PointStruct(
-                            id=point_id,
-
-                            vector=embedding,
-
-                            payload={
-                                "image_url":
-                                    image_url,
-
-                                "canonical_product_ids":
-                                    canonical_product_ids,
-
-                                "asins":
-                                    asins,
-
-                                "embedding_model":
-                                    image_data[
-                                        "embedding_model"
-                                    ],
-
-                                "embedding_dimension":
-                                    image_data[
-                                        "embedding_dimension"
-                                    ],
-                            },
+                        canonical_product_ids = list(
+                            dict.fromkeys(
+                                product[
+                                    "canonical_product_id"
+                                ]
+                                for product in products
+                            )
                         )
-                    )
+
+                        asins = list(
+                            dict.fromkeys(
+                                product["asin"]
+                                for product in products
+                            )
+                        )
+
+                        new_points.append(
+                            PointStruct(
+                                id=point_id,
+
+                                vector=image_data[
+                                    "embedding"
+                                ],
+
+                                payload={
+                                    "image_url":
+                                        image_url,
+
+                                    "canonical_product_ids":
+                                        canonical_product_ids,
+
+                                    "asins":
+                                        asins,
+
+                                    "embedding_model":
+                                        image_data[
+                                            "embedding_model"
+                                        ],
+
+                                    "embedding_dimension":
+                                        image_data[
+                                            "embedding_dimension"
+                                        ],
+                                },
+                            )
+                        )
+
+                        seen_image_urls.add(
+                            image_url
+                        )
+
+                        processed += 1
+
+                    # ==================================================
+                    # CASE 2
+                    # Existing image_url
+                    #
+                    # The image already has an embedding.
+                    #
+                    # DO NOT create another vector.
+                    #
+                    # Only merge product mappings.
+                    # ==================================================
+
+                    else:
+
+                        duplicated += 1
+
+                        existing_updates.append(
+                            (
+                                point_id,
+                                image_url,
+                                image_data[
+                                    "products"
+                                ],
+                            )
+                        )
 
                 except Exception as exc:
 
                     print(
                         f"WARNING: failed to "
-                        f"prepare image point "
+                        f"prepare image "
                         f"{image_url}: {exc}"
                     )
 
                     failed += 1
 
             # ----------------------------------------------------------
-            # Upsert batch
+            # Upsert NEW image points
             # ----------------------------------------------------------
 
-            if points:
+            if new_points:
 
                 client.upsert(
                     collection_name=COLLECTION_NAME,
 
-                    points=points,
+                    points=new_points,
 
                     wait=True,
                 )
 
-                processed += len(points)
+            # ----------------------------------------------------------
+            # Merge duplicate image mappings
+            #
+            # Retrieve the existing Qdrant point and append new products.
+            # ----------------------------------------------------------
+
+            for (
+                point_id,
+                image_url,
+                products,
+            ) in existing_updates:
+
+                try:
+
+                    result = client.retrieve(
+                        collection_name=COLLECTION_NAME,
+
+                        ids=[
+                            point_id
+                        ],
+
+                        with_payload=True,
+
+                        with_vectors=False,
+                    )
+
+                    if not result:
+
+                        print(
+                            f"WARNING: existing "
+                            f"point not found for "
+                            f"{image_url}"
+                        )
+
+                        continue
+
+                    point = result[0]
+
+                    payload = (
+                        point.payload
+                        or {}
+                    )
+
+                    # --------------------------------------------------
+                    # Existing mappings
+                    # --------------------------------------------------
+
+                    existing_product_ids = list(
+                        payload.get(
+                            "canonical_product_ids",
+                            [],
+                        )
+                    )
+
+                    existing_asins = list(
+                        payload.get(
+                            "asins",
+                            [],
+                        )
+                    )
+
+                    # --------------------------------------------------
+                    # Merge new mappings
+                    # --------------------------------------------------
+
+                    for product in products:
+
+                        product_id = product[
+                            "canonical_product_id"
+                        ]
+
+                        asin = product[
+                            "asin"
+                        ]
+
+                        if (
+                            product_id
+                            not in existing_product_ids
+                        ):
+
+                            existing_product_ids.append(
+                                product_id
+                            )
+
+                        if (
+                            asin
+                            and asin not in existing_asins
+                        ):
+
+                            existing_asins.append(
+                                asin
+                            )
+
+                    # --------------------------------------------------
+                    # Update payload
+                    # --------------------------------------------------
+
+                    client.set_payload(
+                        collection_name=COLLECTION_NAME,
+
+                        payload={
+                            "canonical_product_ids":
+                                existing_product_ids,
+
+                            "asins":
+                                existing_asins,
+                        },
+
+                        points=[
+                            point_id
+                        ],
+
+                        wait=True,
+                    )
+
+                except Exception as exc:
+
+                    print(
+                        f"WARNING: failed to "
+                        f"merge duplicate "
+                        f"{image_url}: {exc}"
+                    )
+
+                    failed += 1
+
+        # --------------------------------------------------------------
+        # Shard summary
+        # --------------------------------------------------------------
 
         print(
             f"Shard complete | "
-            f"processed={processed:,} | "
+            f"unique_images={processed:,} | "
+            f"duplicates={duplicated:,} | "
             f"failed={failed:,}"
         )
 
@@ -438,13 +639,23 @@ def main():
     print("=" * 80)
 
     print(
-        f"Unique image embeddings processed: "
+        f"Unique image embeddings: "
         f"{processed:,}"
     )
 
     print(
-        f"Failed embeddings: "
+        f"Duplicate image rows: "
+        f"{duplicated:,}"
+    )
+
+    print(
+        f"Failed rows: "
         f"{failed:,}"
+    )
+
+    print(
+        f"Unique image URLs seen: "
+        f"{len(seen_image_urls):,}"
     )
 
     print(
