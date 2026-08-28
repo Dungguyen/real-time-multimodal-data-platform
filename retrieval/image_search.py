@@ -9,27 +9,36 @@ from PIL import Image
 from transformers import AutoProcessor, CLIPModel
 
 
+# =============================================================================
+# CONFIG
+# =============================================================================
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-INDEX_PATH = (
-    PROJECT_ROOT
-    / "vector_index"
-    / "image.index"
-)
+INDEX_PATH = PROJECT_ROOT / "vector_index" / "image.index"
 
-METADATA_PATH = (
+IMAGE_METADATA_PATH = (
     PROJECT_ROOT
     / "vector_index"
     / "image_metadata.parquet"
 )
 
+PRODUCT_METADATA_PATH = (
+    PROJECT_ROOT
+    / "multimodal"
+    / "multimodal_products.parquet"
+)
+
 MODEL_NAME = "openai/clip-vit-base-patch32"
 
-TOP_K = 10
+DEFAULT_TOP_K = 10
 
+
+# =============================================================================
+# MODEL
+# =============================================================================
 
 def load_model():
-
     print("Loading CLIP model...")
 
     processor = AutoProcessor.from_pretrained(
@@ -49,12 +58,19 @@ def load_model():
     model = model.to(device)
     model.eval()
 
-    print(
-        f"Device: {device}"
-    )
+    print(f"Device: {device}")
+
+    if device.type == "cuda":
+        print(
+            f"GPU: {torch.cuda.get_device_name(0)}"
+        )
 
     return processor, model, device
 
+
+# =============================================================================
+# IMAGE ENCODING
+# =============================================================================
 
 def encode_image(
     image_path,
@@ -62,7 +78,6 @@ def encode_image(
     model,
     device,
 ):
-
     image = Image.open(
         image_path
     ).convert("RGB")
@@ -110,13 +125,19 @@ def encode_image(
     )
 
 
-def load_metadata():
+# =============================================================================
+# IMAGE METADATA
+# =============================================================================
+
+def load_image_metadata():
+
+    print("Loading image metadata...")
 
     table = pq.read_table(
-        METADATA_PATH
+        IMAGE_METADATA_PATH
     )
 
-    return {
+    metadata = {
         "faiss_id": table[
             "faiss_id"
         ].to_pylist(),
@@ -134,11 +155,187 @@ def load_metadata():
         ].to_pylist(),
     }
 
+    print(
+        f"Image metadata rows: "
+        f"{len(metadata['image_url']):,}"
+    )
+
+    return metadata
+
+
+# =============================================================================
+# PRODUCT METADATA
+# =============================================================================
+
+def load_product_metadata():
+
+    print("Loading product metadata...")
+
+    table = pq.read_table(
+        PRODUCT_METADATA_PATH,
+        columns=[
+            "canonical_product_id",
+            "asin",
+            "title",
+            "brand",
+            "main_category",
+            "price",
+        ],
+    )
+
+    product_ids = table[
+        "canonical_product_id"
+    ].to_pylist()
+
+    asins = table[
+        "asin"
+    ].to_pylist()
+
+    titles = table[
+        "title"
+    ].to_pylist()
+
+    brands = table[
+        "brand"
+    ].to_pylist()
+
+    categories = table[
+        "main_category"
+    ].to_pylist()
+
+    prices = table[
+        "price"
+    ].to_pylist()
+
+    products_by_id = {}
+    products_by_asin = {}
+
+    for (
+        product_id,
+        asin,
+        title,
+        brand,
+        category,
+        price,
+    ) in zip(
+        product_ids,
+        asins,
+        titles,
+        brands,
+        categories,
+        prices,
+    ):
+
+        product = {
+            "canonical_product_id": product_id,
+            "asin": asin,
+            "title": title,
+            "brand": brand,
+            "main_category": category,
+            "price": price,
+        }
+
+        if product_id:
+            products_by_id[product_id] = product
+
+        if asin:
+            products_by_asin[asin] = product
+
+    print(
+        f"Products loaded: "
+        f"{len(product_ids):,}"
+    )
+
+    return products_by_id, products_by_asin
+
+
+# =============================================================================
+# PRODUCT LOOKUP
+# =============================================================================
+
+def get_products_for_result(
+    canonical_product_ids,
+    asins,
+    products_by_id,
+    products_by_asin,
+):
+    """
+    Resolve image metadata -> product metadata.
+
+    Priority:
+        1. canonical_product_id
+        2. ASIN
+
+    This handles the case where one image
+    belongs to multiple products.
+    """
+
+    products = []
+    seen = set()
+
+    # ---------------------------------------------------------
+    # Lookup by canonical product ID
+    # ---------------------------------------------------------
+
+    for product_id in (
+        canonical_product_ids or []
+    ):
+
+        product = products_by_id.get(
+            product_id
+        )
+
+        if product is None:
+            continue
+
+        key = product.get(
+            "canonical_product_id"
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        products.append(product)
+
+    # ---------------------------------------------------------
+    # Lookup by ASIN
+    # ---------------------------------------------------------
+
+    for asin in (
+        asins or []
+    ):
+
+        product = products_by_asin.get(
+            asin
+        )
+
+        if product is None:
+            continue
+
+        key = product.get(
+            "canonical_product_id"
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        products.append(product)
+
+    return products
+
+
+# =============================================================================
+# SEARCH
+# =============================================================================
 
 def search(
     query_vector,
     index,
-    metadata,
+    image_metadata,
+    products_by_id,
+    products_by_asin,
     top_k=10,
 ):
 
@@ -157,46 +354,201 @@ def search(
         if faiss_id < 0:
             continue
 
+        canonical_product_ids = (
+            image_metadata[
+                "canonical_product_ids"
+            ][faiss_id]
+        )
+
+        asins = (
+            image_metadata[
+                "asins"
+            ][faiss_id]
+        )
+
+        image_url = (
+            image_metadata[
+                "image_url"
+            ][faiss_id]
+        )
+
+        products = get_products_for_result(
+            canonical_product_ids,
+            asins,
+            products_by_id,
+            products_by_asin,
+        )
+
         result = {
             "rank": len(results) + 1,
-            "similarity": float(score),
-            "image_url": metadata[
-                "image_url"
-            ][faiss_id],
-            "canonical_product_ids": metadata[
-                "canonical_product_ids"
-            ][faiss_id],
-            "asins": metadata[
-                "asins"
-            ][faiss_id],
+
+            "similarity": float(
+                score
+            ),
+
+            "image_url": image_url,
+
+            "canonical_product_ids":
+                canonical_product_ids,
+
+            "asins":
+                asins,
+
+            "products":
+                products,
         }
 
-        results.append(
-            result
-        )
+        results.append(result)
 
     return results
 
 
+# =============================================================================
+# PRINT RESULTS
+# =============================================================================
+
+def print_results(results):
+
+    print()
+
+    print("=" * 80)
+    print("SEARCH RESULTS")
+    print("=" * 80)
+
+    for result in results:
+
+        print()
+
+        print(
+            f"#{result['rank']}"
+        )
+
+        print(
+            f"Similarity : "
+            f"{result['similarity']:.6f}"
+        )
+
+        print(
+            f"Image URL  : "
+            f"{result['image_url']}"
+        )
+
+        products = result[
+            "products"
+        ]
+
+        if not products:
+
+            print(
+                "Product    : "
+                "Metadata not found"
+            )
+
+            continue
+
+        for product_index, product in enumerate(
+            products,
+            start=1,
+        ):
+
+            print()
+
+            if len(products) > 1:
+
+                print(
+                    f"Product {product_index}:"
+                )
+
+            print(
+                f"Product ID : "
+                f"{product['canonical_product_id']}"
+            )
+
+            print(
+                f"ASIN       : "
+                f"{product['asin']}"
+            )
+
+            print(
+                f"Title      : "
+                f"{product['title']}"
+            )
+
+            print(
+                f"Brand      : "
+                f"{product['brand']}"
+            )
+
+            print(
+                f"Category   : "
+                f"{product['main_category']}"
+            )
+
+            price = product[
+                "price"
+            ]
+
+            if price is not None:
+
+                print(
+                    f"Price      : "
+                    f"${price:.2f}"
+                )
+
+            else:
+
+                print(
+                    "Price      : N/A"
+                )
+
+    print()
+
+    print("=" * 80)
+
+    print(
+        f"Returned "
+        f"{len(results)} results"
+    )
+
+    print("=" * 80)
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
 def main():
 
     print("=" * 80)
-    print("IMAGE SIMILARITY SEARCH")
+    print("IMAGE PRODUCT SEARCH")
     print("=" * 80)
 
-    # --------------------------------------------------------------
-    # Query image
-    # --------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Arguments
+    # -------------------------------------------------------------------------
 
     if len(sys.argv) < 2:
 
         print()
+
         print(
             "Usage:"
         )
 
         print(
-            r'python .\retrieval\image_search.py "path\to\image.jpg"'
+            'python .\\retrieval\\image_search.py '
+            '"path\\to\\image.jpg"'
+        )
+
+        print()
+
+        print(
+            "Optional:"
+        )
+
+        print(
+            'python .\\retrieval\\image_search.py '
+            '"path\\to\\image.jpg" 20'
         )
 
         sys.exit(1)
@@ -208,6 +560,7 @@ def main():
     if not image_path.exists():
 
         print()
+
         print(
             f"ERROR: Image not found:"
         )
@@ -218,17 +571,69 @@ def main():
 
         sys.exit(1)
 
+    # -------------------------------------------------------------------------
+    # Top K
+    # -------------------------------------------------------------------------
+
+    top_k = DEFAULT_TOP_K
+
+    if len(sys.argv) >= 3:
+
+        try:
+
+            top_k = int(
+                sys.argv[2]
+            )
+
+        except ValueError:
+
+            print(
+                "ERROR: top_k must be "
+                "an integer."
+            )
+
+            sys.exit(1)
+
+    if top_k <= 0:
+
+        print(
+            "ERROR: top_k must be "
+            "greater than 0."
+        )
+
+        sys.exit(1)
+
     print()
+
     print(
         f"Query image: {image_path}"
     )
 
-    # --------------------------------------------------------------
+    print(
+        f"Top K:       {top_k}"
+    )
+
+    # -------------------------------------------------------------------------
     # Load FAISS
-    # --------------------------------------------------------------
+    # -------------------------------------------------------------------------
 
     print()
-    print("Loading FAISS index...")
+
+    print(
+        "Loading FAISS index..."
+    )
+
+    if not INDEX_PATH.exists():
+
+        print(
+            f"ERROR: FAISS index not found:"
+        )
+
+        print(
+            INDEX_PATH
+        )
+
+        sys.exit(1)
 
     index = faiss.read_index(
         str(INDEX_PATH)
@@ -242,39 +647,54 @@ def main():
         f"Dimension: {index.d}"
     )
 
-    # --------------------------------------------------------------
-    # Load metadata
-    # --------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Load image metadata
+    # -------------------------------------------------------------------------
 
-    print(
-        "Loading metadata..."
+    image_metadata = (
+        load_image_metadata()
     )
 
-    metadata = load_metadata()
-
-    if len(metadata["image_url"]) != index.ntotal:
+    if (
+        len(
+            image_metadata[
+                "image_url"
+            ]
+        )
+        != index.ntotal
+    ):
 
         raise RuntimeError(
-            "Metadata and FAISS index "
-            "have different row counts."
+            "Image metadata and FAISS "
+            "index have different row counts."
         )
 
-    print(
-        f"Metadata rows: {len(metadata['image_url']):,}"
+    # -------------------------------------------------------------------------
+    # Load product metadata
+    # -------------------------------------------------------------------------
+
+    (
+        products_by_id,
+        products_by_asin,
+    ) = load_product_metadata()
+
+    # -------------------------------------------------------------------------
+    # Load CLIP
+    # -------------------------------------------------------------------------
+
+    processor, model, device = (
+        load_model()
     )
 
-    # --------------------------------------------------------------
-    # Load CLIP
-    # --------------------------------------------------------------
-
-    processor, model, device = load_model()
-
-    # --------------------------------------------------------------
-    # Encode query image
-    # --------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Encode query
+    # -------------------------------------------------------------------------
 
     print()
-    print("Encoding query image...")
+
+    print(
+        "Encoding query image..."
+    )
 
     query_vector = encode_image(
         image_path,
@@ -288,65 +708,37 @@ def main():
         f"{query_vector.shape}"
     )
 
-    # --------------------------------------------------------------
+    # -------------------------------------------------------------------------
     # Search
-    # --------------------------------------------------------------
+    # -------------------------------------------------------------------------
 
     print()
+
     print(
-        f"Searching top {TOP_K}..."
+        f"Searching top {top_k}..."
     )
 
     results = search(
         query_vector,
         index,
-        metadata,
-        TOP_K,
+        image_metadata,
+        products_by_id,
+        products_by_asin,
+        top_k,
     )
 
-    # --------------------------------------------------------------
+    # -------------------------------------------------------------------------
     # Results
-    # --------------------------------------------------------------
+    # -------------------------------------------------------------------------
 
-    print()
-    print("=" * 80)
-    print("SEARCH RESULTS")
-    print("=" * 80)
-
-    for result in results:
-
-        print()
-        print(
-            f"#{result['rank']}"
-        )
-
-        print(
-            f"Similarity : "
-            f"{result['similarity']:.6f}"
-        )
-
-        print(
-            f"Product IDs: "
-            f"{result['canonical_product_ids']}"
-        )
-
-        print(
-            f"ASINs      : "
-            f"{result['asins']}"
-        )
-
-        print(
-            f"Image URL  : "
-            f"{result['image_url']}"
-        )
-
-    print()
-    print("=" * 80)
-    print(
-        f"Returned {len(results)} results"
+    print_results(
+        results
     )
-    print("=" * 80)
 
+
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
 
 if __name__ == "__main__":
     main()
