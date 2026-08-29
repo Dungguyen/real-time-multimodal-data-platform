@@ -78,3 +78,7 @@ data/processed/*
 # Vector indexes
 vector_index/*.index
 vector_index/*.parquet
+
+# Embeddings
+embeddings/text
+embeddings/image_shards
