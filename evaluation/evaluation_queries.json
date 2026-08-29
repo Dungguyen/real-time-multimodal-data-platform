@@ -1,0 +1,20 @@
+[
+  {
+    "query_id": "q001",
+    "text": "white mechanical keyboard",
+    "image": "tests/query.jpg",
+    "relevant_products": [
+      "B01E8KO2B0",
+      "B000EXZ0V2"
+    ]
+  },
+  {
+    "query_id": "q002",
+    "text": "black wireless mouse",
+    "image": "tests/query_mouse.jpg",
+    "relevant_products": [
+      "ASIN_1",
+      "ASIN_2"
+    ]
+  }
+]

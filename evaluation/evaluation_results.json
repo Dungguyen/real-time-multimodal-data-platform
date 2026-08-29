@@ -1,0 +1,261 @@
+{
+  "summary": {
+    "total_queries": 10,
+    "evaluated_queries": 10,
+    "skipped_queries": 0
+  },
+  "average_metrics": {
+    "precision@5": 0.46,
+    "precision@10": 0.27,
+    "recall@5": 0.66,
+    "recall@10": 0.7425,
+    "MRR": 0.95,
+    "NDCG@5": 0.7470936856548691,
+    "NDCG@10": 0.7395987514364941,
+    "hit_rate@5": 1.0,
+    "hit_rate@10": 1.0
+  },
+  "per_query": [
+    {
+      "query_id": "q001",
+      "text": "white mechanical keyboard",
+      "image": "tests/query.jpg",
+      "relevant_products": [
+        "B01E8KO2B0",
+        "B01FS835A0",
+        "B005JC4OR4",
+        "B00GH472AO"
+      ],
+      "result_file": "evaluation\\results\\q001_results.json",
+      "result_count": 10,
+      "metrics": {
+        "precision@5": 0.4,
+        "precision@10": 0.2,
+        "recall@5": 0.5,
+        "recall@10": 0.5,
+        "MRR": 1.0,
+        "NDCG@5": 0.5413996682199069,
+        "NDCG@10": 0.5413996682199069,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0
+      }
+    },
+    {
+      "query_id": "q002",
+      "text": "white keyboard",
+      "image": "tests/query.jpg",
+      "relevant_products": [
+        "B01E8KO2B0",
+        "B01FS835A0",
+        "B005JC4OR4",
+        "B00GH472AO",
+        "B000EXZ0V2",
+        "B0053O9ZN6",
+        "B0076KQRXG",
+        "B008GXQWOG",
+        "B00B5SEHN2",
+        "B00LL4V5OY"
+      ],
+      "result_file": "evaluation\\results\\q002_results.json",
+      "result_count": 10,
+      "metrics": {
+        "precision@5": 0.8,
+        "precision@10": 0.6,
+        "recall@5": 0.4,
+        "recall@10": 0.6,
+        "MRR": 1.0,
+        "NDCG@5": 0.8539316501572937,
+        "NDCG@10": 0.7059054020403313,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0
+      }
+    },
+    {
+      "query_id": "q003",
+      "text": "mechanical keyboard",
+      "image": "tests/query.jpg",
+      "relevant_products": [
+        "B01E8KO2B0",
+        "B01FS835A0",
+        "B000EXZ0V2",
+        "B008GXQWOG",
+        "B00B5SEHN2"
+      ],
+      "result_file": "evaluation\\results\\q003_results.json",
+      "result_count": 10,
+      "metrics": {
+        "precision@5": 0.2,
+        "precision@10": 0.1,
+        "recall@5": 0.2,
+        "recall@10": 0.2,
+        "MRR": 1.0,
+        "NDCG@5": 0.3391602052736161,
+        "NDCG@10": 0.3391602052736161,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0
+      }
+    },
+    {
+      "query_id": "q004",
+      "text": "white gaming keyboard",
+      "image": "tests/query.jpg",
+      "relevant_products": [
+        "B01E8KO2B0",
+        "B01FS835A0"
+      ],
+      "result_file": "evaluation\\results\\q004_results.json",
+      "result_count": 10,
+      "metrics": {
+        "precision@5": 0.2,
+        "precision@10": 0.1,
+        "recall@5": 0.5,
+        "recall@10": 0.5,
+        "MRR": 1.0,
+        "NDCG@5": 0.6131471927654584,
+        "NDCG@10": 0.6131471927654584,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0
+      }
+    },
+    {
+      "query_id": "q005",
+      "text": "white mini keyboard",
+      "image": "tests/query.jpg",
+      "relevant_products": [
+        "B01E8KO2B0",
+        "B0053O9ZN6",
+        "B00LL4V5OY"
+      ],
+      "result_file": "evaluation\\results\\q005_results.json",
+      "result_count": 10,
+      "metrics": {
+        "precision@5": 0.6,
+        "precision@10": 0.3,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "MRR": 1.0,
+        "NDCG@5": 1.0,
+        "NDCG@10": 1.0,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0
+      }
+    },
+    {
+      "query_id": "q006",
+      "text": "white wireless keyboard",
+      "image": "tests/query.jpg",
+      "relevant_products": [
+        "B00GH472AO",
+        "B001QFFM3S"
+      ],
+      "result_file": "evaluation\\results\\q006_results.json",
+      "result_count": 10,
+      "metrics": {
+        "precision@5": 0.2,
+        "precision@10": 0.2,
+        "recall@5": 0.5,
+        "recall@10": 1.0,
+        "MRR": 0.5,
+        "NDCG@5": 0.38685280723454163,
+        "NDCG@10": 0.5912352048230277,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0
+      }
+    },
+    {
+      "query_id": "q007",
+      "text": "white ergonomic keyboard",
+      "image": "tests/query.jpg",
+      "relevant_products": [
+        "B0076KQRXG",
+        "B001QFFM3S"
+      ],
+      "result_file": "evaluation\\results\\q007_results.json",
+      "result_count": 10,
+      "metrics": {
+        "precision@5": 0.4,
+        "precision@10": 0.2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "MRR": 1.0,
+        "NDCG@5": 1.0,
+        "NDCG@10": 1.0,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0
+      }
+    },
+    {
+      "query_id": "q008",
+      "text": "white compact keyboard",
+      "image": "tests/query.jpg",
+      "relevant_products": [
+        "B01E8KO2B0",
+        "B0053O9ZN6",
+        "B00LL4V5OY"
+      ],
+      "result_file": "evaluation\\results\\q008_results.json",
+      "result_count": 10,
+      "metrics": {
+        "precision@5": 0.6,
+        "precision@10": 0.3,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "MRR": 1.0,
+        "NDCG@5": 0.9060254355346823,
+        "NDCG@10": 0.9060254355346823,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0
+      }
+    },
+    {
+      "query_id": "q009",
+      "text": "Happy Hacking white keyboard",
+      "image": "tests/query.jpg",
+      "relevant_products": [
+        "B000EXZ0V2",
+        "B008GXQWOG"
+      ],
+      "result_file": "evaluation\\results\\q009_results.json",
+      "result_count": 10,
+      "metrics": {
+        "precision@5": 0.4,
+        "precision@10": 0.2,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "MRR": 1.0,
+        "NDCG@5": 1.0,
+        "NDCG@10": 1.0,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0
+      }
+    },
+    {
+      "query_id": "q010",
+      "text": "white keyboard for computer",
+      "image": "tests/query.jpg",
+      "relevant_products": [
+        "B01E8KO2B0",
+        "B01FS835A0",
+        "B0053O9ZN6",
+        "B0076KQRXG",
+        "B00GH472AO",
+        "B008GXQWOG",
+        "B00B5SEHN2",
+        "B00LL4V5OY"
+      ],
+      "result_file": "evaluation\\results\\q010_results.json",
+      "result_count": 10,
+      "metrics": {
+        "precision@5": 0.8,
+        "precision@10": 0.5,
+        "recall@5": 0.5,
+        "recall@10": 0.625,
+        "MRR": 1.0,
+        "NDCG@5": 0.830419897363192,
+        "NDCG@10": 0.6991144057079179,
+        "hit_rate@5": 1.0,
+        "hit_rate@10": 1.0
+      }
+    }
+  ]
+}

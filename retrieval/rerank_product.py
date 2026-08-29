@@ -488,26 +488,17 @@ def calculate_brand_relevance(
 def calculate_multimodal_agreement(
     candidate,
 ):
-    """
-    Measure agreement between text and image retrieval.
-
-    For a product retrieved by both modalities:
-
-        min(text_score, image_score)
-
-    is used as the agreement score.
-    """
 
     text_score = safe_float(
         candidate.get(
-            "text_score",
+            "raw_text_score",
             0.0,
         )
     )
 
     image_score = safe_float(
         candidate.get(
-            "image_score",
+            "raw_image_score",
             0.0,
         )
     )
@@ -1078,29 +1069,16 @@ def load_review_stats_for_candidates(
 def calculate_semantic_score(
     candidate,
 ):
-    """
-    Build the semantic score from retrieval modalities.
-
-    text-only:
-        text_score
-
-    image-only:
-        image_score
-
-    text+image:
-        0.5 * text_score +
-        0.5 * image_score
-    """
 
     text_score = safe_float(
         candidate.get(
-            "text_score"
+            "raw_text_score"
         )
     )
 
     image_score = safe_float(
         candidate.get(
-            "image_score"
+            "raw_image_score"
         )
     )
 
