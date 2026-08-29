@@ -1,0 +1,116 @@
+{
+  "q001": {
+    "relevant_asins": [
+      "B005JC4PG4",
+      "B005JC4Q4U",
+      "B00HA7CZZ4",
+      "B01E8KO2B0",
+      "B008BG59ME",
+      "B005JC4PTQ",
+      "B005JC4QLS",
+      "B005JC4OZG",
+      "B001QSZ8IE",
+      "B008GXQWOG"
+    ]
+  },
+
+  "q002": {
+    "relevant_asins": [
+      "B00HA7CZZ4",
+      "B005JC4PG4",
+      "B005JC4Q4U",
+      "B008BG59ME",
+      "B005JC4PTQ",
+      "B005JC4QLS",
+      "B005JC4OZG",
+      "B001QSZ8IE",
+      "B00006BAZD",
+      "B01E8KO2B0"
+    ]
+  },
+
+  "q003": {
+    "relevant_asins": [
+      "B00QL2X6MA",
+      "B01E8KO2B0",
+      "B00091SB06",
+      "B0013ITQA8",
+      "B01G1XFMS4",
+      "B008GXT6SK",
+      "B019LHXSG0",
+      "B01DK3APIK"
+    ]
+  },
+
+  "q004": {
+    "relevant_asins": [
+      "B00HA7CZZ4",
+      "B005JC4PG4",
+      "B01E8KO2B0",
+      "B005JC4PTQ",
+      "B005JC4Q4U",
+      "B008BG59ME",
+      "B005JC4OZG",
+      "B005JC4QLS"
+    ]
+  },
+
+  "q005": {
+    "relevant_asins": [
+      "B005JC4PG4",
+      "B005JC4Q4U",
+      "B008BG59ME",
+      "B005JC4PTQ",
+      "B005JC4QLS",
+      "B005JC4OZG",
+      "B01E8KO2B0"
+    ]
+  },
+
+  "q006": {
+    "relevant_asins": [
+      "B001QFFM3S"
+    ]
+  },
+
+  "q007": {
+    "relevant_asins": [
+      "B001QFFM3S"
+    ]
+  },
+
+  "q008": {
+    "relevant_asins": [
+      "B005JC4PG4",
+      "B005JC4Q4U",
+      "B008BG59ME",
+      "B005JC4PTQ",
+      "B005JC4QLS",
+      "B005JC4OZG",
+      "B00HA7CZZ4"
+    ]
+  },
+
+  "q009": {
+    "relevant_asins": [
+      "B008GXQWOG",
+      "B008GXT6SK",
+      "B0000BW01X",
+      "B000EXZ0V2"
+    ]
+  },
+
+  "q010": {
+    "relevant_asins": [
+      "B00HA7CZZ4",
+      "B005JC4PG4",
+      "B005JC4Q4U",
+      "B008BG59ME",
+      "B005JC4PTQ",
+      "B005JC4QLS",
+      "B005JC4OZG",
+      "B001QSZ8IE",
+      "B01E8KO2B0"
+    ]
+  }
+}
