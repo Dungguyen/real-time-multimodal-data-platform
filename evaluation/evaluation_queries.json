@@ -1,20 +1,15 @@
-[
-  {
-    "query_id": "q001",
-    "text": "white mechanical keyboard",
-    "image": "tests/query.jpg",
-    "relevant_products": [
-      "B01E8KO2B0",
-      "B000EXZ0V2"
-    ]
-  },
-  {
-    "query_id": "q002",
-    "text": "black wireless mouse",
-    "image": "tests/query_mouse.jpg",
-    "relevant_products": [
-      "ASIN_1",
-      "ASIN_2"
-    ]
-  }
-]
+{
+  "queries": [
+    {
+      "query_id": "q1",
+      "text": "wireless headphones",
+      "relevant_product_ids": [
+        "prod_cfab80c0f30ec60fe53b917d",
+        "prod_8e038cae56f73769ba9060b2",
+        "prod_10acb1d518c447c44bb10616",
+        "prod_1c45c8f046322771f2116087",
+        "prod_4e91315a7ec187ff92f96024"
+      ]
+    }
+  ]
+}

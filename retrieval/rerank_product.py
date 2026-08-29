@@ -41,23 +41,35 @@ METADATA_BATCH_SIZE = 10_000
 
 # ---------------------------------------------------------------------------
 # Ranking weights
+#
+# Total = 1.00
+#
+# Semantic       : retrieval relevance
+# Title          : exact product-name relevance
+# Category       : category relevance
+# Brand          : brand relevance
+# Multimodal     : agreement between text/image retrieval
+# Quality        : rating + review confidence
+# Popularity     : review-count signal
+# Verified       : verified-review signal
 # ---------------------------------------------------------------------------
 
-SEMANTIC_WEIGHT = 0.50
+SEMANTIC_WEIGHT = 0.45
 
-RATING_WEIGHT = 0.05
+TITLE_WEIGHT = 0.20
 
 CATEGORY_WEIGHT = 0.07
 
-TITLE_WEIGHT = 0.18
-
-BRAND_WEIGHT = 0.03
+BRAND_WEIGHT = 0.04
 
 MULTIMODAL_WEIGHT = 0.08
 
-POPULARITY_WEIGHT = 0.05
+QUALITY_WEIGHT = 0.08
+
+POPULARITY_WEIGHT = 0.04
 
 VERIFIED_WEIGHT = 0.04
+
 
 MIN_REVIEWS_FOR_CONFIDENCE = 5
 
@@ -112,6 +124,19 @@ def safe_float(value, default=0.0):
         return default
 
 
+def clamp(value, minimum=0.0, maximum=1.0):
+    """
+    Clamp value into [minimum, maximum].
+    """
+
+    value = safe_float(value)
+
+    return max(
+        minimum,
+        min(value, maximum),
+    )
+
+
 def normalize_rating(value):
     """
     Amazon rating:
@@ -126,12 +151,17 @@ def normalize_rating(value):
     if rating <= 0:
         return 0.0
 
-    return min(rating / 5.0, 1.0)
+    return clamp(
+        rating / 5.0
+    )
 
 
 def normalize_popularity(review_count):
     """
     Log normalization for review count.
+
+    A product with 10,000 reviews should not receive
+    1000x more ranking power than a product with 10 reviews.
     """
 
     count = safe_float(review_count)
@@ -139,11 +169,10 @@ def normalize_popularity(review_count):
     if count <= 0:
         return 0.0
 
-    return min(
+    return clamp(
         math.log1p(count)
         /
-        math.log1p(10000),
-        1.0,
+        math.log1p(10000)
     )
 
 
@@ -161,10 +190,7 @@ def normalize_verified_ratio(value):
     if ratio > 1:
         ratio /= 100.0
 
-    return max(
-        0.0,
-        min(ratio, 1.0),
-    )
+    return clamp(ratio)
 
 
 def find_column(table, candidates):
@@ -175,6 +201,7 @@ def find_column(table, candidates):
     columns = set(table.column_names)
 
     for candidate in candidates:
+
         if candidate in columns:
             return candidate
 
@@ -188,9 +215,17 @@ def find_column(table, candidates):
 def tokenize_text(text):
     """
     Normalize text into tokens.
+
+    Example:
+
+        "Sony WH-1000XM5 Headphones"
+
+    becomes approximately:
+
+        ["sony", "wh", "1000xm5", "headphones"]
     """
 
-    if not text:
+    if text is None:
         return []
 
     text = html.unescape(
@@ -209,6 +244,27 @@ def tokenize_text(text):
     ]
 
 
+def unique_tokens(tokens):
+    """
+    Preserve order while removing duplicates.
+    """
+
+    seen = set()
+
+    result = []
+
+    for token in tokens:
+
+        if token in seen:
+            continue
+
+        seen.add(token)
+
+        result.append(token)
+
+    return result
+
+
 # ============================================================================
 # QUERY TERM RELEVANCE
 # ============================================================================
@@ -225,35 +281,25 @@ def calculate_query_term_relevance(
     if not query or not text:
         return 0.0
 
-    query_tokens = [
-        token
-        for token in re.findall(
-            r"\b[a-z0-9]+\b",
-            str(query).lower(),
-        )
-        if token not in QUERY_STOPWORDS
-    ]
+    query_tokens = unique_tokens(
+        tokenize_text(query)
+    )
 
     text_tokens = set(
-        re.findall(
-            r"\b[a-z0-9]+\b",
-            str(text).lower(),
-        )
+        tokenize_text(text)
     )
 
     if not query_tokens or not text_tokens:
         return 0.0
 
-    matched = {
-        token
+    matched = sum(
+        1
         for token in query_tokens
         if token in text_tokens
-    }
+    )
 
-    return (
-        len(matched)
-        /
-        len(set(query_tokens))
+    return clamp(
+        matched / len(query_tokens)
     )
 
 
@@ -268,53 +314,89 @@ def calculate_title_relevance(
     """
     Calculate lexical relevance between
     text query and product title.
+
+    Components:
+
+        1. Query token coverage
+        2. Exact phrase bonus
+        3. Ordered token matching
+        4. Prefix / substring matching
     """
 
     if not query or not title:
         return 0.0
 
-    query = str(query).lower()
-    title = str(title).lower()
-
-    query_term_score = (
-        calculate_query_term_relevance(
-            query=query,
-            text=title,
-        )
+    query_tokens = unique_tokens(
+        tokenize_text(query)
     )
 
-    query_tokens = [
-        token
-        for token in re.findall(
-            r"\b[a-z0-9]+\b",
-            query,
-        )
-        if token not in QUERY_STOPWORDS
-    ]
-
-    title_tokens = re.findall(
-        r"\b[a-z0-9]+\b",
-        title,
-    )
+    title_tokens = tokenize_text(title)
 
     if not query_tokens or not title_tokens:
         return 0.0
 
-    # ------------------------------------------------------------------
-    # Exact phrase
-    # ------------------------------------------------------------------
-
-    phrase_bonus = 0.0
-
-    normalized_query = " ".join(
-        query_tokens
+    title_token_set = set(
+        title_tokens
     )
+
+    # ------------------------------------------------------------------
+    # Token coverage
+    # ------------------------------------------------------------------
+
+    exact_matches = sum(
+        1
+        for token in query_tokens
+        if token in title_token_set
+    )
+
+    token_coverage = (
+        exact_matches
+        /
+        len(query_tokens)
+    )
+
+    # ------------------------------------------------------------------
+    # Substring matching
+    #
+    # Useful for product identifiers such as:
+    #
+    # "xm5"
+    # "1000xm5"
+    # "iphone13"
+    # ------------------------------------------------------------------
+
+    substring_matches = 0
 
     normalized_title = " ".join(
         title_tokens
     )
 
+    for token in query_tokens:
+
+        if token in title_token_set:
+            continue
+
+        if token in normalized_title:
+            substring_matches += 1
+
+    substring_score = (
+        substring_matches
+        /
+        len(query_tokens)
+    )
+
+    # ------------------------------------------------------------------
+    # Exact phrase
+    # ------------------------------------------------------------------
+
+    normalized_query = " ".join(
+        query_tokens
+    )
+
+    phrase_bonus = 0.0
+
     if normalized_query in normalized_title:
+
         phrase_bonus = 1.0
 
     # ------------------------------------------------------------------
@@ -351,19 +433,17 @@ def calculate_title_relevance(
     # ------------------------------------------------------------------
 
     title_score = (
-        0.70 * query_term_score
+        0.60 * token_coverage
         +
-        0.20 * phrase_bonus
+        0.15 * substring_score
+        +
+        0.15 * phrase_bonus
         +
         0.10 * ordered_match
     )
 
-    return max(
-        0.0,
-        min(
-            title_score,
-            1.0,
-        ),
+    return clamp(
+        title_score
     )
 
 
@@ -379,7 +459,7 @@ def calculate_category_relevance(
     Match query tokens against product category.
     """
 
-    query_tokens = set(
+    query_tokens = unique_tokens(
         tokenize_text(query)
     )
 
@@ -411,16 +491,14 @@ def calculate_category_relevance(
     if not category_tokens:
         return 0.0
 
-    matched = (
-        query_tokens
-        &
-        category_tokens
+    matched = sum(
+        1
+        for token in query_tokens
+        if token in category_tokens
     )
 
-    return (
-        len(matched)
-        /
-        len(query_tokens)
+    return clamp(
+        matched / len(query_tokens)
     )
 
 
@@ -436,7 +514,7 @@ def calculate_brand_relevance(
     Match query tokens against brand.
     """
 
-    query_tokens = set(
+    query_tokens = unique_tokens(
         tokenize_text(query)
     )
 
@@ -468,16 +546,14 @@ def calculate_brand_relevance(
     if not brand_tokens:
         return 0.0
 
-    matched = (
-        query_tokens
-        &
-        brand_tokens
+    matched = sum(
+        1
+        for token in query_tokens
+        if token in brand_tokens
     )
 
-    return (
-        len(matched)
-        /
-        len(query_tokens)
+    return clamp(
+        matched / len(query_tokens)
     )
 
 
@@ -488,15 +564,23 @@ def calculate_brand_relevance(
 def calculate_multimodal_agreement(
     candidate,
 ):
+    """
+    Measure agreement between text and image retrieval.
 
-    text_score = safe_float(
+    min(text_score, image_score)
+
+    is intentionally conservative:
+    both modalities must agree for a high score.
+    """
+
+    text_score = clamp(
         candidate.get(
             "raw_text_score",
             0.0,
         )
     )
 
-    image_score = safe_float(
+    image_score = clamp(
         candidate.get(
             "raw_image_score",
             0.0,
@@ -515,6 +599,7 @@ def calculate_multimodal_agreement(
         "text-image",
         "both",
     }:
+
         return 0.0
 
     return min(
@@ -536,6 +621,14 @@ def calculate_quality_score(
 
     Products with few reviews are pulled toward
     a neutral prior of 0.5.
+
+    This prevents:
+
+        5.0 / 1 review
+
+    from automatically dominating:
+
+        4.8 / 500 reviews
     """
 
     rating = safe_float(
@@ -554,12 +647,8 @@ def calculate_quality_score(
     if review_count <= 0:
         return 0.5
 
-    rating_score = max(
-        0.0,
-        min(
-            rating / 5.0,
-            1.0,
-        ),
+    rating_score = clamp(
+        rating / 5.0
     )
 
     confidence = (
@@ -575,19 +664,144 @@ def calculate_quality_score(
     neutral_prior = 0.5
 
     quality_score = (
-        confidence * rating_score
+        confidence
+        *
+        rating_score
         +
-        (1.0 - confidence)
-        * neutral_prior
+        (
+            1.0
+            -
+            confidence
+        )
+        *
+        neutral_prior
     )
 
-    return max(
-        0.0,
-        min(
-            quality_score,
-            1.0,
-        ),
+    return clamp(
+        quality_score
     )
+
+
+# ============================================================================
+# QUERY INTENT
+# ============================================================================
+
+def detect_query_intent(
+    query,
+):
+    """
+    Detect whether the query appears to contain
+    product/category/brand-oriented terms.
+
+    This does not use an LLM.
+    It is a lightweight signal used only to
+    slightly adjust lexical contributions.
+    """
+
+    tokens = unique_tokens(
+        tokenize_text(query)
+    )
+
+    return {
+        "token_count": len(tokens),
+
+        "has_query": bool(tokens),
+
+        "is_specific": (
+            len(tokens) >= 2
+        ),
+    }
+
+
+# ============================================================================
+# SEMANTIC SCORE
+# ============================================================================
+
+def calculate_semantic_score(
+    candidate,
+):
+    """
+    Calculate semantic retrieval score.
+
+    text-only:
+        text score
+
+    image-only:
+        image score
+
+    text+image:
+        balanced combination
+
+    If both modalities exist but one is missing,
+    the available modality is not artificially penalized
+    by multiplying it by zero.
+    """
+
+    text_score = clamp(
+        candidate.get(
+            "raw_text_score",
+            0.0,
+        )
+    )
+
+    image_score = clamp(
+        candidate.get(
+            "raw_image_score",
+            0.0,
+        )
+    )
+
+    modality = str(
+        candidate.get(
+            "modality",
+            "",
+        )
+    ).lower().strip()
+
+    if modality == "text-only":
+
+        return text_score
+
+    if modality == "image-only":
+
+        return image_score
+
+    if modality in {
+        "text+image",
+        "text-image",
+        "both",
+    }:
+
+        return clamp(
+            0.50 * text_score
+            +
+            0.50 * image_score
+        )
+
+    # ------------------------------------------------------------------
+    # Fallback:
+    #
+    # Some retrieval pipelines may not correctly set modality.
+    # If scores exist, use them instead of silently returning zero.
+    # ------------------------------------------------------------------
+
+    if text_score > 0 and image_score > 0:
+
+        return clamp(
+            0.50 * text_score
+            +
+            0.50 * image_score
+        )
+
+    if text_score > 0:
+
+        return text_score
+
+    if image_score > 0:
+
+        return image_score
+
+    return 0.0
 
 
 # ============================================================================
@@ -648,6 +862,16 @@ def load_product_metadata_for_candidates(
 ):
     """
     Load only metadata needed by current candidates.
+
+    Lookup is created by:
+
+        ("product_id", id)
+
+    and
+
+        ("asin", asin)
+
+    so reranking can reliably fall back to ASIN.
     """
 
     print()
@@ -676,6 +900,8 @@ def load_product_metadata_for_candidates(
     )
 
     product_lookup = {}
+
+    asin_lookup = {}
 
     total_processed = 0
 
@@ -816,15 +1042,30 @@ def load_product_metadata_for_candidates(
             ):
                 continue
 
-            product_lookup[
-                product_id_str
-            ] = {
+            metadata = {
+                "product_id": product_id,
                 "asin": asin,
                 "title": title,
                 "brand": brand,
                 "category": category,
                 "price": price,
             }
+
+            product_lookup[
+                (
+                    "product_id",
+                    product_id_str,
+                )
+            ] = metadata
+
+            if asin_str:
+
+                asin_lookup[
+                    (
+                        "asin",
+                        asin_str,
+                    )
+                ] = metadata
 
         total_processed += row_count
 
@@ -836,24 +1077,54 @@ def load_product_metadata_for_candidates(
                 f"Scanning metadata: "
                 f"{min(total_processed, total_rows):,}/"
                 f"{total_rows:,}"
-                f" | Matched: "
+                f" | Product matches: "
                 f"{len(product_lookup):,}"
+                f" | ASIN matches: "
+                f"{len(asin_lookup):,}"
             )
 
-        if (
+        matched_products = (
             len(product_lookup)
-            >= len(candidate_product_ids)
-            and candidate_product_ids
+        )
+
+        matched_asins = (
+            len(asin_lookup)
+        )
+
+        if (
+            candidate_product_ids
+            and
+            matched_products >= len(
+                candidate_product_ids
+            )
+            and
+            (
+                not candidate_asins
+                or
+                matched_asins >= len(
+                    candidate_asins
+                )
+            )
         ):
+
             break
 
     print(
-        f"Product metadata matched: "
+        f"Product metadata matched by ID: "
         f"{len(product_lookup):,}/"
         f"{len(candidate_product_ids):,}"
     )
 
-    return product_lookup
+    print(
+        f"Product metadata matched by ASIN: "
+        f"{len(asin_lookup):,}/"
+        f"{len(candidate_asins):,}"
+    )
+
+    return {
+        "product_id": product_lookup,
+        "asin": asin_lookup,
+    }
 
 
 # ============================================================================
@@ -867,6 +1138,8 @@ def load_review_stats_for_candidates(
 ):
     """
     Load review statistics for candidate products only.
+
+    Both product_id and ASIN lookups are maintained.
     """
 
     print()
@@ -1002,6 +1275,20 @@ def load_review_stats_for_candidates(
             verified_ratios,
         ):
 
+            record = {
+                "review_count": safe_float(
+                    review_count
+                ),
+
+                "rating": safe_float(
+                    rating
+                ),
+
+                "verified_ratio": safe_float(
+                    verified_ratio
+                ),
+            }
+
             product_id_str = (
                 str(product_id)
                 if product_id is not None
@@ -1013,18 +1300,6 @@ def load_review_stats_for_candidates(
                 if asin is not None
                 else None
             )
-
-            record = {
-                "review_count": safe_float(
-                    review_count
-                ),
-                "rating": safe_float(
-                    rating
-                ),
-                "verified_ratio": safe_float(
-                    verified_ratio
-                ),
-            }
 
             if (
                 product_id_str
@@ -1040,7 +1315,7 @@ def load_review_stats_for_candidates(
                     )
                 ] = record
 
-            elif (
+            if (
                 asin_str
                 and
                 asin_str
@@ -1063,62 +1338,388 @@ def load_review_stats_for_candidates(
 
 
 # ============================================================================
-# SEMANTIC SCORE
+# METADATA RESOLUTION
 # ============================================================================
 
-def calculate_semantic_score(
-    candidate,
+def resolve_product_metadata(
+    product_id,
+    asin,
+    product_lookup,
 ):
+    """
+    Resolve product metadata using:
 
-    text_score = safe_float(
-        candidate.get(
-            "raw_text_score"
+        1. product_id
+        2. ASIN
+
+    This fixes an important weakness in the original implementation.
+    """
+
+    metadata = {}
+
+    product_id_lookup = (
+        product_lookup.get(
+            "product_id",
+            {}
         )
     )
 
-    image_score = safe_float(
-        candidate.get(
-            "raw_image_score"
+    asin_lookup = (
+        product_lookup.get(
+            "asin",
+            {}
         )
     )
 
-    modality = str(
-        candidate.get(
-            "modality",
-            "",
+    if product_id:
+
+        metadata = product_id_lookup.get(
+            (
+                "product_id",
+                str(product_id),
+            ),
+            {}
         )
-    ).lower().strip()
 
-    if modality == "text-only":
+    if not metadata and asin:
 
-        score = text_score
+        metadata = asin_lookup.get(
+            (
+                "asin",
+                str(asin),
+            ),
+            {}
+        )
 
-    elif modality == "image-only":
+    return metadata
 
-        score = image_score
 
-    elif modality in {
-        "text+image",
-        "text-image",
-        "both",
-    }:
+# ============================================================================
+# REVIEW RESOLUTION
+# ============================================================================
 
-        score = (
-            0.50 * text_score
+def resolve_review_stats(
+    product_id,
+    asin,
+    review_lookup,
+):
+    """
+    Resolve review statistics using:
+
+        1. product_id
+        2. ASIN
+    """
+
+    if not review_lookup:
+        return {}
+
+    if product_id:
+
+        record = review_lookup.get(
+            (
+                "product_id",
+                str(product_id),
+            )
+        )
+
+        if record is not None:
+            return record
+
+    if asin:
+
+        record = review_lookup.get(
+            (
+                "asin",
+                str(asin),
+            )
+        )
+
+        if record is not None:
+            return record
+
+    return {}
+
+
+# ============================================================================
+# SCORE WEIGHT ADJUSTMENT
+# ============================================================================
+
+def calculate_dynamic_weights(
+    text_query,
+    title_score,
+    category_score,
+    brand_score,
+):
+    """
+    Slightly adapt lexical weights according to
+    query/product relevance.
+
+    The semantic retrieval score remains dominant.
+
+    This is deliberately conservative.
+    """
+
+    weights = {
+        "semantic": SEMANTIC_WEIGHT,
+        "title": TITLE_WEIGHT,
+        "category": CATEGORY_WEIGHT,
+        "brand": BRAND_WEIGHT,
+        "multimodal": MULTIMODAL_WEIGHT,
+        "quality": QUALITY_WEIGHT,
+        "popularity": POPULARITY_WEIGHT,
+        "verified": VERIFIED_WEIGHT,
+    }
+
+    query_tokens = unique_tokens(
+        tokenize_text(text_query)
+    )
+
+    # ------------------------------------------------------------------
+    # No text query:
+    #
+    # Don't give lexical features power when there
+    # is no text query.
+    # ------------------------------------------------------------------
+
+    if not query_tokens:
+
+        weights["title"] = 0.0
+        weights["category"] = 0.0
+        weights["brand"] = 0.0
+
+        # Redistribute removed lexical weight
+        # toward semantic retrieval.
+        removed = (
+            TITLE_WEIGHT
             +
-            0.50 * image_score
+            CATEGORY_WEIGHT
+            +
+            BRAND_WEIGHT
         )
 
-    else:
+        weights["semantic"] += removed
 
-        score = 0.0
+        return weights
 
-    return max(
-        0.0,
-        min(
-            score,
-            1.0,
+    # ------------------------------------------------------------------
+    # Specific title match:
+    #
+    # A strong title match is useful for product queries.
+    # ------------------------------------------------------------------
+
+    if title_score >= 0.80:
+
+        bonus = 0.03
+
+        weights["title"] += bonus
+        weights["semantic"] -= bonus
+
+    # ------------------------------------------------------------------
+    # Strong category match
+    # ------------------------------------------------------------------
+
+    if category_score >= 0.80:
+
+        bonus = 0.01
+
+        weights["category"] += bonus
+        weights["semantic"] -= bonus
+
+    # ------------------------------------------------------------------
+    # Strong brand match
+    # ------------------------------------------------------------------
+
+    if brand_score >= 0.80:
+
+        bonus = 0.01
+
+        weights["brand"] += bonus
+        weights["semantic"] -= bonus
+
+    # ------------------------------------------------------------------
+    # Safety normalization
+    # ------------------------------------------------------------------
+
+    total = sum(
+        weights.values()
+    )
+
+    if total <= 0:
+        return weights
+
+    for key in weights:
+
+        weights[key] /= total
+
+    return weights
+
+
+# ============================================================================
+# FINAL SCORE
+# ============================================================================
+
+def calculate_final_score(
+    semantic_score,
+    title_score,
+    category_score,
+    brand_score,
+    multimodal_score,
+    quality_score,
+    popularity_score,
+    verified_score,
+    weights,
+):
+    """
+    Calculate final business-aware score.
+    """
+
+    contributions = {
+        "semantic": (
+            weights["semantic"]
+            *
+            semantic_score
         ),
+
+        "title": (
+            weights["title"]
+            *
+            title_score
+        ),
+
+        "category": (
+            weights["category"]
+            *
+            category_score
+        ),
+
+        "brand": (
+            weights["brand"]
+            *
+            brand_score
+        ),
+
+        "multimodal": (
+            weights["multimodal"]
+            *
+            multimodal_score
+        ),
+
+        "quality": (
+            weights["quality"]
+            *
+            quality_score
+        ),
+
+        "popularity": (
+            weights["popularity"]
+            *
+            popularity_score
+        ),
+
+        "verified": (
+            weights["verified"]
+            *
+            verified_score
+        ),
+    }
+
+    final_score = sum(
+        contributions.values()
+    )
+
+    return (
+        clamp(final_score),
+        contributions,
+    )
+
+
+# ============================================================================
+# DEDUPLICATION
+# ============================================================================
+
+def deduplicate_candidates(
+    candidates,
+):
+    """
+    Keep the strongest candidate for each product.
+
+    Priority:
+
+        product_id
+        ASIN
+        candidate index
+
+    This prevents the same product from occupying
+    multiple positions because it appeared in both
+    text and image retrieval.
+    """
+
+    best_by_key = {}
+
+    for candidate in candidates:
+
+        product_id = candidate.get(
+            "product_id",
+            candidate.get(
+                "canonical_product_id"
+            ),
+        )
+
+        asin = candidate.get(
+            "asin"
+        )
+
+        if product_id is not None:
+
+            key = (
+                "product_id",
+                str(product_id),
+            )
+
+        elif asin is not None:
+
+            key = (
+                "asin",
+                str(asin),
+            )
+
+        else:
+
+            # Candidate has no stable identifier.
+            # Keep it separately.
+            key = (
+                "candidate",
+                id(candidate),
+            )
+
+        current = best_by_key.get(
+            key
+        )
+
+        if current is None:
+
+            best_by_key[key] = candidate
+
+            continue
+
+        current_semantic = (
+            calculate_semantic_score(
+                current
+            )
+        )
+
+        candidate_semantic = (
+            calculate_semantic_score(
+                candidate
+            )
+        )
+
+        if candidate_semantic > current_semantic:
+
+            best_by_key[key] = candidate
+
+    return list(
+        best_by_key.values()
     )
 
 
@@ -1138,18 +1739,30 @@ def rerank_products(
     Business-aware product reranking.
     """
 
+    # ------------------------------------------------------------------
+    # Deduplicate retrieval results first.
+    # ------------------------------------------------------------------
+
+    candidates = deduplicate_candidates(
+        candidates
+    )
+
     results = []
 
     for candidate in candidates:
 
-        product_id = str(
+        product_id = candidate.get(
+            "product_id",
             candidate.get(
-                "product_id",
-                candidate.get(
-                    "canonical_product_id",
-                    "",
-                ),
-            )
+                "canonical_product_id",
+                "",
+            ),
+        )
+
+        product_id = (
+            str(product_id)
+            if product_id is not None
+            else ""
         )
 
         asin = candidate.get(
@@ -1170,16 +1783,20 @@ def rerank_products(
         # Product metadata
         # ------------------------------------------------------------------
 
-        metadata = product_lookup.get(
-            product_id,
-            {},
+        metadata = (
+            resolve_product_metadata(
+                product_id=product_id,
+                asin=asin,
+                product_lookup=product_lookup,
+            )
         )
 
         if not metadata and debug:
 
             print(
                 f"[WARNING] Metadata missing: "
-                f"{product_id}"
+                f"product_id={product_id}, "
+                f"asin={asin}"
             )
 
         if asin is None:
@@ -1236,27 +1853,15 @@ def rerank_products(
         # Review statistics
         # ------------------------------------------------------------------
 
-        review_stats = review_lookup.get(
-            (
-                "product_id",
-                product_id,
+        review_stats = (
+            resolve_review_stats(
+                product_id=product_id,
+                asin=asin,
+                review_lookup=review_lookup,
             )
         )
 
-        if (
-            review_stats is None
-            and
-            asin is not None
-        ):
-
-            review_stats = review_lookup.get(
-                (
-                    "asin",
-                    str(asin),
-                )
-            )
-
-        if review_stats is None:
+        if not review_stats:
 
             review_stats = {
                 "review_count": 0,
@@ -1295,6 +1900,13 @@ def rerank_products(
             )
         )
 
+        quality_score = (
+            calculate_quality_score(
+                rating=rating,
+                review_count=review_count,
+            )
+        )
+
         popularity_score = (
             normalize_popularity(
                 review_count
@@ -1317,79 +1929,42 @@ def rerank_products(
             )
         )
 
-        multimodal_score = max(
-            0.0,
-            min(
-                multimodal_score,
-                1.0,
-            ),
+        multimodal_score = clamp(
+            multimodal_score
         )
 
         # ------------------------------------------------------------------
-        # Contributions
+        # Dynamic weights
         # ------------------------------------------------------------------
 
-        semantic_contribution = (
-            SEMANTIC_WEIGHT
-            * semantic_score
-        )
-
-        title_contribution = (
-            TITLE_WEIGHT
-            * title_score
-        )
-
-        category_contribution = (
-            CATEGORY_WEIGHT
-            * category_score
-        )
-
-        brand_contribution = (
-            BRAND_WEIGHT
-            * brand_score
-        )
-
-        multimodal_contribution = (
-            MULTIMODAL_WEIGHT
-            * multimodal_score
-        )
-
-        rating_contribution = (
-            RATING_WEIGHT
-            * rating_score
-        )
-
-        popularity_contribution = (
-            POPULARITY_WEIGHT
-            * popularity_score
-        )
-
-        verified_contribution = (
-            VERIFIED_WEIGHT
-            * verified_score
+        weights = calculate_dynamic_weights(
+            text_query=text_query,
+            title_score=title_score,
+            category_score=category_score,
+            brand_score=brand_score,
         )
 
         # ------------------------------------------------------------------
         # Final score
         # ------------------------------------------------------------------
 
-        final_score = (
-            semantic_contribution
-            +
-            title_contribution
-            +
-            category_contribution
-            +
-            brand_contribution
-            +
-            multimodal_contribution
-            +
-            rating_contribution
-            +
-            popularity_contribution
-            +
-            verified_contribution
+        final_score, contributions = (
+            calculate_final_score(
+                semantic_score=semantic_score,
+                title_score=title_score,
+                category_score=category_score,
+                brand_score=brand_score,
+                multimodal_score=multimodal_score,
+                quality_score=quality_score,
+                popularity_score=popularity_score,
+                verified_score=verified_score,
+                weights=weights,
+            )
         )
+
+        # ------------------------------------------------------------------
+        # Result
+        # ------------------------------------------------------------------
 
         result = {
             **candidate,
@@ -1406,51 +1981,105 @@ def rerank_products(
 
             "price": price,
 
-            "semantic_score": semantic_score,
+            # ----------------------------------------------------------
+            # Raw / normalized scores
+            # ----------------------------------------------------------
 
-            "title_relevance_score": title_score,
+            "semantic_score":
+                semantic_score,
 
-            "category_relevance_score": category_score,
+            "title_relevance_score":
+                title_score,
 
-            "brand_relevance_score": brand_score,
+            "category_relevance_score":
+                category_score,
 
-            "multimodal_score": multimodal_score,
+            "brand_relevance_score":
+                brand_score,
 
-            "rating": rating,
+            "multimodal_score":
+                multimodal_score,
 
-            "review_count": review_count,
+            "rating":
+                rating,
 
-            "verified_ratio": verified_ratio,
+            "review_count":
+                review_count,
 
-            "rating_score": rating_score,
+            "verified_ratio":
+                verified_ratio,
 
-            "popularity_score": popularity_score,
+            "rating_score":
+                rating_score,
 
-            "verified_score": verified_score,
+            "quality_score":
+                quality_score,
+
+            "popularity_score":
+                popularity_score,
+
+            "verified_score":
+                verified_score,
+
+            # ----------------------------------------------------------
+            # Actual weights used
+            # ----------------------------------------------------------
+
+            "semantic_weight":
+                weights["semantic"],
+
+            "title_weight":
+                weights["title"],
+
+            "category_weight":
+                weights["category"],
+
+            "brand_weight":
+                weights["brand"],
+
+            "multimodal_weight":
+                weights["multimodal"],
+
+            "quality_weight":
+                weights["quality"],
+
+            "popularity_weight":
+                weights["popularity"],
+
+            "verified_weight":
+                weights["verified"],
+
+            # ----------------------------------------------------------
+            # Contributions
+            # ----------------------------------------------------------
 
             "semantic_contribution":
-                semantic_contribution,
+                contributions["semantic"],
 
             "title_relevance_contribution":
-                title_contribution,
+                contributions["title"],
 
             "category_relevance_contribution":
-                category_contribution,
+                contributions["category"],
 
             "brand_relevance_contribution":
-                brand_contribution,
+                contributions["brand"],
 
             "multimodal_contribution":
-                multimodal_contribution,
+                contributions["multimodal"],
 
-            "rating_contribution":
-                rating_contribution,
+            "quality_contribution":
+                contributions["quality"],
 
             "popularity_contribution":
-                popularity_contribution,
+                contributions["popularity"],
 
             "verified_contribution":
-                verified_contribution,
+                contributions["verified"],
+
+            # ----------------------------------------------------------
+            # Final
+            # ----------------------------------------------------------
 
             "final_score":
                 final_score,
@@ -1462,14 +2091,39 @@ def rerank_products(
 
     # ----------------------------------------------------------------------
     # Sort
+    #
+    # Primary:
+    #     final score
+    #
+    # Secondary:
+    #     semantic score
+    #
+    # Tertiary:
+    #     quality score
     # ----------------------------------------------------------------------
 
     results.sort(
         key=lambda item: (
-            item.get(
-                "final_score",
-                0.0,
-            )
+            safe_float(
+                item.get(
+                    "final_score",
+                    0.0,
+                )
+            ),
+
+            safe_float(
+                item.get(
+                    "semantic_score",
+                    0.0,
+                )
+            ),
+
+            safe_float(
+                item.get(
+                    "quality_score",
+                    0.0,
+                )
+            ),
         ),
         reverse=True,
     )
@@ -1510,7 +2164,9 @@ def load_candidates(
         encoding="utf-8",
     ) as file:
 
-        data = json.load(file)
+        data = json.load(
+            file
+        )
 
     text_query = ""
 
@@ -1585,9 +2241,9 @@ def print_results(
     """
 
     print()
-    print("=" * 80)
+    print("=" * 100)
     print("FINAL PRODUCT RESULTS")
-    print("=" * 80)
+    print("=" * 100)
 
     print(
         f"Displaying top "
@@ -1601,7 +2257,62 @@ def print_results(
 
         print()
         print(
+            "-" * 100
+        )
+
+        print(
             f"#{index}"
+        )
+
+        print()
+
+        # --------------------------------------------------------------
+        # Product
+        # --------------------------------------------------------------
+
+        print(
+            f"Product ID:        "
+            f"{result.get('product_id')}"
+        )
+
+        print(
+            f"ASIN:              "
+            f"{result.get('asin')}"
+        )
+
+        print(
+            f"Title:             "
+            f"{result.get('title')}"
+        )
+
+        print(
+            f"Brand:             "
+            f"{result.get('brand')}"
+        )
+
+        print(
+            f"Category:          "
+            f"{result.get('category')}"
+        )
+
+        print(
+            f"Price:             "
+            f"{result.get('price')}"
+        )
+
+        print(
+            f"Modality:          "
+            f"{result.get('modality')}"
+        )
+
+        print()
+
+        # --------------------------------------------------------------
+        # Ranking scores
+        # --------------------------------------------------------------
+
+        print(
+            "RANKING SCORES"
         )
 
         print(
@@ -1635,6 +2346,31 @@ def print_results(
         )
 
         print(
+            f"Quality score:     "
+            f"{result['quality_score']:.6f}"
+        )
+
+        print(
+            f"Popularity score:  "
+            f"{result['popularity_score']:.6f}"
+        )
+
+        print(
+            f"Verified score:    "
+            f"{result['verified_score']:.6f}"
+        )
+
+        print()
+
+        # --------------------------------------------------------------
+        # Review information
+        # --------------------------------------------------------------
+
+        print(
+            "PRODUCT QUALITY"
+        )
+
+        print(
             f"Rating:            "
             f"{result['rating']:.2f}"
         )
@@ -1649,39 +2385,54 @@ def print_results(
             f"{result['verified_ratio']:.2%}"
         )
 
+        print()
+
+        # --------------------------------------------------------------
+        # Contributions
+        # --------------------------------------------------------------
+
         print(
-            f"Product ID:        "
-            f"{result.get('product_id')}"
+            "SCORE CONTRIBUTIONS"
         )
 
         print(
-            f"ASIN:              "
-            f"{result.get('asin')}"
+            f"Semantic:          "
+            f"{result['semantic_contribution']:.6f}"
         )
 
         print(
             f"Title:             "
-            f"{result.get('title')}"
+            f"{result['title_relevance_contribution']:.6f}"
         )
 
         print(
-            f"Brand:              "
-            f"{result.get('brand')}"
+            f"Category:          "
+            f"{result['category_relevance_contribution']:.6f}"
         )
 
         print(
-            f"Category:           "
-            f"{result.get('category')}"
+            f"Brand:             "
+            f"{result['brand_relevance_contribution']:.6f}"
         )
 
         print(
-            f"Price:              "
-            f"{result.get('price')}"
+            f"Multimodal:        "
+            f"{result['multimodal_contribution']:.6f}"
         )
 
         print(
-            f"Modality:           "
-            f"{result.get('modality')}"
+            f"Quality:            "
+            f"{result['quality_contribution']:.6f}"
+        )
+
+        print(
+            f"Popularity:        "
+            f"{result['popularity_contribution']:.6f}"
+        )
+
+        print(
+            f"Verified:          "
+            f"{result['verified_contribution']:.6f}"
         )
 
 
@@ -1778,9 +2529,21 @@ def main():
 
     args = parser.parse_args()
 
-    print("=" * 80)
+    if args.top_k <= 0:
+
+        raise ValueError(
+            "--top-k must be greater than 0."
+        )
+
+    if args.batch_size <= 0:
+
+        raise ValueError(
+            "--batch-size must be greater than 0."
+        )
+
+    print("=" * 100)
     print("PRODUCT RERANKING")
-    print("=" * 80)
+    print("=" * 100)
 
     print(
         f"Candidates:  {args.candidates}"
@@ -1794,9 +2557,13 @@ def main():
         f"Output:      {args.output}"
     )
 
-    # ----------------------------------------------------------------------
+    print(
+        f"Batch size:  {args.batch_size}"
+    )
+
+    # ------------------------------------------------------------------
     # Load candidates
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     candidate_path = Path(
         args.candidates
@@ -1832,9 +2599,9 @@ def main():
 
         return
 
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Candidate IDs
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     (
         candidate_product_ids,
@@ -1854,9 +2621,9 @@ def main():
         f"{len(candidate_asins):,}"
     )
 
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Load metadata
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     product_lookup = (
         load_product_metadata_for_candidates(
@@ -1874,9 +2641,9 @@ def main():
         )
     )
 
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Reranking
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     print()
     print(
@@ -1892,9 +2659,9 @@ def main():
         debug=args.debug,
     )
 
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Output
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     print_results(
         results
@@ -1910,9 +2677,9 @@ def main():
     )
 
     print()
-    print("=" * 80)
+    print("=" * 100)
     print("PRODUCT RERANKING COMPLETE")
-    print("=" * 80)
+    print("=" * 100)
 
 
 if __name__ == "__main__":
